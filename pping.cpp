@@ -320,9 +320,11 @@ static void process_packet(const Packet& pkt)
         flows.at(dststr + "+" + srcstr)->bytesDep = fBytes;
 
         if (machineReadable) {
-            printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f",
+            printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u\n",
                     int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
-                    rtt, fr->min, fBytes, dBytes, pBytes);
+                    rtt, fr->min, fBytes, dBytes, pBytes,
+                    ipsstr.c_str(), t_tcp->sport(),
+                    ipdstr.c_str(), t_tcp->dport());
         } else {
             char tbuff[80];
             struct tm* ptm = std::localtime(&result);
@@ -334,8 +336,8 @@ static void process_packet(const Packet& pkt)
             printf("%s %s %s", tbuff, fmtTimeDiff(rtt).c_str(),
                    fmtTimeDiff(fr->min).c_str());
 #endif
+            printf(" %s\n", fstr.c_str());
         }
-        printf(" %s\n", fstr.c_str());
         int64_t now = clock_now();
         if (now - nextFlush >= 0) {
             nextFlush = now + flushInt;
