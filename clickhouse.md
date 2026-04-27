@@ -10,20 +10,7 @@ The following options transfer that stream into ClickHouse, assuming the table s
 
 ---
 
-## 1. Direct pipe into `clickhouse-client` (simplest)
-
-pping outputs space-separated; ClickHouse's `TSV` format expects tabs. Bridge with `tr`:
-
-```sh
-sudo ./pping -m -i eth0 | tr ' ' '\t' | clickhouse-client \
-  --query="INSERT INTO pping_data FORMAT TSV"
-```
-
-Downside: no buffering, no retry on ClickHouse downtime — if the insert pipe breaks, data is lost.
-
----
-
-## 2. Vector (recommended for production)
+## 1. Vector (recommended for production)
 
 [Vector](https://vector.dev/) is purpose-built for this: reads from stdin, parses custom formats, buffers to disk, and writes to ClickHouse natively with retries.
 
@@ -35,7 +22,7 @@ Config would use a `stdin` source → `regex_parser` transform → `clickhouse` 
 
 ---
 
-## 3. Intermediate file + batch load
+## 2. Intermediate file + batch load
 
 Write to a rolling log file, load periodically:
 
@@ -43,20 +30,15 @@ Write to a rolling log file, load periodically:
 sudo ./pping -m -i eth0 >> /var/log/pping.log
 
 # cron: every minute
-cat /var/log/pping.log | tr ' ' '\t' | clickhouse-client \
-  --query="INSERT INTO pping_data FORMAT TSV" && > /var/log/pping.log
+mv /var/log/pping.log /var/log/pping.load.log
+cat /var/log/pping.load.log | tr ' ' '\t' | clickhouse-client \
+  --query="INSERT INTO pping_data FORMAT TSV" && rm /var/log/pping.load.log
 ```
 
-Simple, but file rotation and atomicity need care to avoid duplicates or data loss.
-
----
-
-## 4. Modify pping to output to ClickHouse directly
-
-Add the [ClickHouse HTTP API](https://clickhouse.com/docs/en/interfaces/http) call inside `pping.cpp`, POSTing batches of rows. More invasive but removes the pipeline dependency entirely.
+`mv` is atomic — pping continues appending to a new `/var/log/pping.log` immediately after the rename, so no lines are lost while the load is running. The load file is only deleted on successful insert; if ClickHouse is unavailable, it stays on disk for the next run.
 
 ---
 
 ## Recommendation
 
-For a dev/one-off setup, option 1 is fine. For production where data loss matters, **Vector** is the least-friction path — it handles the space→tab conversion, buffering, and ClickHouse retries with a small config file and no code changes to pping.
+**Vector** is the preferred path — it handles buffering, retries, and backpressure automatically with no code changes to pping. The file + batch approach works as a simpler fallback but requires careful handling of rotation to avoid duplicates or data loss.

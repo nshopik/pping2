@@ -63,6 +63,7 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <ifaddrs.h>
+#include <netdb.h>
 #include <pcap.h>
 #include <ctime>
 #include <iostream>
@@ -126,6 +127,7 @@ static int64_t offTm = -1;      // first packet capture time (used to
 static bool machineReadable = false; // machine or human readable output
 static double capTm, startm;        // (in seconds)
 static int pktCnt, not_tcp, no_TS, not_v4or6, uniDir;
+static std::string node;            // FQDN hostname of this capture node
 static std::string localIP;         // ignore pp through this address
 static bool filtLocal = true;
 static std::string filter("tcp");    // default bpf filter
@@ -172,7 +174,7 @@ static inline tsInfo* getTStm(const std::string& key)
     try {
         tsInfo* ti = tsTbl.at(key);
         return ti;
-    } catch (std::out_of_range) {
+    } catch (std::out_of_range&) {
         return nullptr;
     }
 }
@@ -320,11 +322,12 @@ static void process_packet(const Packet& pkt)
         flows.at(dststr + "+" + srcstr)->bytesDep = fBytes;
 
         if (machineReadable) {
-            printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u\n",
+            printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u %s\n",
                     int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
                     rtt, fr->min, fBytes, dBytes, pBytes,
                     ipsstr.c_str(), t_tcp->sport(),
-                    ipdstr.c_str(), t_tcp->dport());
+                    ipdstr.c_str(), t_tcp->dport(),
+                    node.c_str());
         } else {
             char tbuff[80];
             struct tm* ptm = std::localtime(&result);
@@ -370,6 +373,22 @@ static void cleanUp(double n)
         }
         ++it;
     }
+}
+
+static std::string getFQDN()
+{
+    char hostname[256];
+    if (gethostname(hostname, sizeof(hostname)) != 0) {
+        return "unknown";
+    }
+    struct addrinfo hints{}, *info;
+    hints.ai_flags = AI_CANONNAME;
+    if (getaddrinfo(hostname, nullptr, &hints, &info) != 0 || !info) {
+        return hostname;
+    }
+    std::string fqdn = info->ai_canonname;
+    freeaddrinfo(info);
+    return fqdn;
 }
 
 // return the local ip address of 'ifname'
@@ -527,6 +546,7 @@ int main(int argc, char* const* argv)
             exit(EXIT_FAILURE);
         }
     }
+    node = getFQDN();
     if (liveInp && machineReadable) {
         // output every 100ms when piping to analysis/display program
         flushInt /= 10;
