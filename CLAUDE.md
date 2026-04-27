@@ -25,8 +25,11 @@ sudo ./pping -i eth0
 # From pcap file
 ./pping -r capture.pcap
 
-# Machine-readable output
+# Machine-readable output (compact)
 ./pping -m -i eth0
+
+# Extended machine-readable output (all fields)
+./pping -e -i eth0
 ```
 
 ## Architecture
@@ -46,8 +49,9 @@ Single-file C++ program (`pping.cpp`) using [libtins](http://libtins.github.io/)
 4. Save current TSval in `tsTbl` (only if reverse flow is known, to avoid one-directional state)
 5. `cleanUp()` periodically evicts stale TSvals (older than `tsvalMaxAge`) and idle flows
 
-**Output:** all RTT lines go to stdout; summary/diagnostic stats go to stderr. Two formats:
+**Output:** all RTT lines go to stdout; summary/diagnostic stats go to stderr. Three formats:
 - **Human-readable** (default): `HH:MM:SS <rtt> <minRTT> srcIP:sport+dstIP:dport`
-- **Machine-readable** (`-m`): `unix_timestamp.usec rtt_sec minRTT_sec fBytes dBytes pBytes srcIP sport dstIP dport`
+- **Machine-readable** (`-m`): `unix_timestamp.usec rtt_sec srcIP dstIP`
+- **Extended machine-readable** (`-e`): `unix_timestamp.usec rtt_sec minRTT_sec fBytes dBytes pBytes srcIP sport dstIP dport node`
 
-stdout is flushed periodically via `flushInt` (every ~1s normally, ~100ms in live+machine-readable mode).
+`-e` implies `-m`. stdout is flushed periodically via `flushInt` (every ~1s normally, ~100ms in live+machine-readable mode).

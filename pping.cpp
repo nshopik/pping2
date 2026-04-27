@@ -117,14 +117,15 @@ static std::unordered_map<std::string, tsInfo*> tsTbl;
 static double tsvalMaxAge = 10.;    // limit age of TSvals to use
 static double flowMaxIdle = 300.;   // flow idle time until flow forgotten
 static double sumInt = 10.;         // how often (sec) to print summary line
-static int maxFlows = 10000;
+static int maxFlows = 65535;
 static int flowCnt;
 static double time_to_run;      // how many seconds to capture (0=no limit)
 static int maxPackets;          // max packets to capture (0=no limit)
 static int64_t offTm = -1;      // first packet capture time (used to
                                 // avoid precision loss when 52 bit timestamp
                                 // normalized into FP double 47 bit mantissa)
-static bool machineReadable = false; // machine or human readable output
+static bool machineReadable = false;         // machine or human readable output
+static bool extendedMachineOutput = false;   // extended machine output with all fields
 static double capTm, startm;        // (in seconds)
 static int pktCnt, not_tcp, no_TS, not_v4or6, uniDir;
 static std::string node;            // FQDN hostname of this capture node
@@ -274,9 +275,9 @@ static void process_packet(const Packet& pkt)
     // Creates a flowRec entry whenever needed
     flowRec* fr;
     if (flows.count(fstr) == 0u) {
-        if (flowCnt > maxFlows) {
-            // stop adding flows till something goes away
-            return; 
+        if (flowCnt >= maxFlows) {
+            std::cerr << "flow limit (" << maxFlows << ") reached, dropping new flow: " << fstr << "\n";
+            return;
         }
         fr = new flowRec(fstr);
         flowCnt++;
@@ -321,13 +322,17 @@ static void process_packet(const Packet& pkt)
         fr->lstBytesSnt = arr_fwd;
         flows.at(dststr + "+" + srcstr)->bytesDep = fBytes;
 
-        if (machineReadable) {
+        if (extendedMachineOutput) {
             printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u %s\n",
                     int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
                     rtt, fr->min, fBytes, dBytes, pBytes,
                     ipsstr.c_str(), t_tcp->sport(),
                     ipdstr.c_str(), t_tcp->dport(),
                     node.c_str());
+        } else if (machineReadable) {
+            printf("%" PRId64 ".%06d %.6f %s %s\n",
+                    int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
+                    rtt, ipsstr.c_str(), ipdstr.c_str());
         } else {
             char tbuff[80];
             struct tm* ptm = std::localtime(&result);
@@ -440,6 +445,7 @@ static struct option opts[] = {
     { "verbose",   no_argument,       nullptr, 'v' },
     { "showLocal", no_argument,       nullptr, 'l' },
     { "machine",   no_argument,       nullptr, 'm' },
+    { "extended",  no_argument,       nullptr, 'e' },
     { "sumInt",    required_argument, nullptr, 'S' },
     { "tsvalMaxAge", required_argument, nullptr, 'M' },
     { "flowMaxIdle", required_argument, nullptr, 'F' },
@@ -465,9 +471,18 @@ static void help(const char* pname) {
 "  -m|--machine       'machine readable' output format suitable\n"
 "                     for graphing or post-processing. Timestamps\n"
 "                     are printed as seconds since capture start.\n"
+"                     RTT is printed as seconds with a resolution of\n"
+"                     1us (6 digits after decimal point).\n"
+"                     Fields: timestamp rtt srcIP dstIP\n"
+"\n"
+"  -e|--extended      'machine readable' output format suitable\n"
+"                     for graphing or post-processing. Timestamps\n"
+"                     are printed as seconds since capture start.\n"
 "                     RTT and minRTT are printed as seconds. All\n"
 "                     times have a resolution of 1us (6 digits after\n"
 "                     decimal point).\n"
+"                     Fields: timestamp rtt minRTT fBytes dBytes pBytes\n"
+"                     srcIP sport dstIP dport node\n"
 "\n"
 "  -c|--count num     stop after capturing <num> packets\n"
 "\n"
@@ -497,7 +512,7 @@ int main(int argc, char* const* argv)
         help(argv[0]);
         exit(1);
     }
-    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqv",
+    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqve",
                                  opts, nullptr)) != -1; ) {
         switch (c) {
         case 'i': liveInp = true; fname = optarg; break;
@@ -509,6 +524,7 @@ int main(int argc, char* const* argv)
         case 'v': break; // summary on by default
         case 'l': filtLocal = false; break;
         case 'm': machineReadable = true; break;
+        case 'e': machineReadable = true; extendedMachineOutput = true; break;
         case 'S': sumInt = atof(optarg); break;
         case 'M': tsvalMaxAge = atof(optarg); break;
         case 'F': flowMaxIdle = atof(optarg); break;
