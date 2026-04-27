@@ -63,7 +63,7 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <ifaddrs.h>
-#include <netdb.h>
+#include <unistd.h>
 #include <pcap.h>
 #include <ctime>
 #include <iostream>
