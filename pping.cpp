@@ -70,6 +70,7 @@
 #include <sys/prctl.h>
 #endif
 #include <pcap.h>
+#include <csignal>
 #include <ctime>
 #include <iostream>
 #include <string>
@@ -129,6 +130,9 @@ static int flowCnt;
 // entries) and ~3% of a 32GB host's RAM under hostile flood.
 static const size_t maxTSvals = 4000000;
 static int tsDropped;
+// Set by SIGINT/SIGTERM handler to break the packet loop cleanly so the
+// end-of-run wall-clock summary still prints on Ctrl+C from live capture.
+static volatile sig_atomic_t stopRequested = 0;
 static double time_to_run;      // how many seconds to capture (0=no limit)
 static int maxPackets;          // max packets to capture (0=no limit)
 static int64_t offTm = -1;      // first packet capture time (used to
@@ -437,6 +441,8 @@ static std::string localAddrOf(const std::string ifname)
     return local;
 }
 
+static void handleSignal(int) { stopRequested = 1; }
+
 // Drop root after the packet socket / pcap file is open. The packet loop
 // then parses untrusted bytes (network or pcap) through libtins as an
 // unprivileged user, so a parse-time memory bug cannot pivot to root.
@@ -623,7 +629,21 @@ int main(int argc, char* const* argv)
     struct timespec wallStart, wallEnd;
     clock_gettime(CLOCK_MONOTONIC, &wallStart);
 
+    // Catch Ctrl+C and SIGTERM so the loop exits cleanly via the flag check
+    // below and the wall-clock summary still prints. No SA_RESTART so libpcap
+    // returns from its blocking read promptly on signal.
+    struct sigaction sa{};
+    sa.sa_handler = handleSignal;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+    // Ignore SIGPIPE so a closed downstream pipe (e.g. `pping ... | head`)
+    // doesn't kill us before the wall-clock summary prints. Writes to the
+    // closed fd will return EPIPE, which iostream/printf swallow silently.
+    signal(SIGPIPE, SIG_IGN);
+
     for (const auto& packet : *snif) {
+        if (stopRequested) break;
         process_packet(packet);
         ++totalPkts;
 
