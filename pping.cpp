@@ -630,8 +630,9 @@ int main(int argc, char* const* argv)
     clock_gettime(CLOCK_MONOTONIC, &wallStart);
 
     // Catch Ctrl+C and SIGTERM so the loop exits cleanly via the flag check
-    // below and the wall-clock summary still prints. No SA_RESTART so libpcap
-    // returns from its blocking read promptly on signal.
+    // below. In file mode this lets the wall-clock summary still print after
+    // an interrupted long replay. No SA_RESTART so libpcap returns from its
+    // blocking read promptly on signal.
     struct sigaction sa{};
     sa.sa_handler = handleSignal;
     sigemptyset(&sa.sa_mask);
@@ -673,15 +674,21 @@ int main(int argc, char* const* argv)
         }
     }
 
-    clock_gettime(CLOCK_MONOTONIC, &wallEnd);
-    double wallSec = (wallEnd.tv_sec - wallStart.tv_sec) +
-                     (wallEnd.tv_nsec - wallStart.tv_nsec) * 1e-9;
-    if (totalPkts > 0 && wallSec > 0) {
-        fprintf(stderr,
-                "wall-clock: %.3fs, %" PRId64 " packets, %.1f ns/pkt, %.3f Mpps\n",
-                wallSec, totalPkts,
-                wallSec * 1e9 / totalPkts,
-                totalPkts / wallSec / 1e6);
+    // File-mode only: wall-clock measures CPU-bound replay throughput, which
+    // is the useful benchmark number. Live capture is bounded by what arrives
+    // on the wire, not by pping, so the same number would just describe the
+    // network's quietness.
+    if (!liveInp) {
+        clock_gettime(CLOCK_MONOTONIC, &wallEnd);
+        double wallSec = (wallEnd.tv_sec - wallStart.tv_sec) +
+                         (wallEnd.tv_nsec - wallStart.tv_nsec) * 1e-9;
+        if (totalPkts > 0 && wallSec > 0) {
+            fprintf(stderr,
+                    "wall-clock: %.3fs, %" PRId64 " packets, %.1f ns/pkt, %.3f Mpps\n",
+                    wallSec, totalPkts,
+                    wallSec * 1e9 / totalPkts,
+                    totalPkts / wallSec / 1e6);
+        }
     }
 
     exit(0);

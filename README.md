@@ -88,12 +88,17 @@ summarization or plotting utility. In the latter case, the `-m`
 
 ## Benchmarking ##
 
-pping prints a wall-clock summary line to stderr at the end of every run:
+In file mode (`-r`), pping prints a wall-clock summary line to stderr at the
+end of the run:
 ```
 wall-clock: 4.213s, 1000000 packets, 4213.0 ns/pkt, 0.237 Mpps
 ```
 `ns/pkt` and `Mpps` are the same measurement (average over the run) in
-different units. Use this to size CPU budget against expected packet rates.
+different units. This number reflects pping's CPU-bound throughput.
+
+Live capture (`-i`) does not print this line: throughput on a live interface
+is bounded by the network's actual packet rate, not by pping, so the number
+would just describe how quiet the wire is.
 
 To benchmark on a representative workload, capture from a real interface and
 replay through pping in file mode:
