@@ -64,6 +64,11 @@
 #include <sys/socket.h>
 #include <ifaddrs.h>
 #include <unistd.h>
+#include <pwd.h>
+#include <grp.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <pcap.h>
 #include <ctime>
 #include <iostream>
@@ -420,6 +425,36 @@ static std::string localAddrOf(const std::string ifname)
     return local;
 }
 
+// Drop root after the packet socket / pcap file is open. The packet loop
+// then parses untrusted bytes (network or pcap) through libtins as an
+// unprivileged user, so a parse-time memory bug cannot pivot to root.
+// No-op when not running as root (e.g. installed with `setcap cap_net_raw+ep`).
+static void dropPrivileges(const char* user)
+{
+    if (geteuid() != 0) {
+        return;
+    }
+    struct passwd* pw = getpwnam(user);
+    if (pw == nullptr) {
+        std::cerr << "fatal: user '" << user
+                  << "' not found; refusing to run packet parser as root\n";
+        exit(EXIT_FAILURE);
+    }
+    if (setgroups(0, nullptr) != 0) { perror("setgroups"); exit(EXIT_FAILURE); }
+    if (setgid(pw->pw_gid) != 0)    { perror("setgid");    exit(EXIT_FAILURE); }
+    if (setuid(pw->pw_uid) != 0)    { perror("setuid");    exit(EXIT_FAILURE); }
+    // sanity: confirm we cannot regain uid 0
+    if (setuid(0) == 0) {
+        std::cerr << "fatal: privilege drop failed (regained root)\n";
+        exit(EXIT_FAILURE);
+    }
+#ifdef __linux__
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+        perror("prctl(PR_SET_NO_NEW_PRIVS)");
+    }
+#endif
+}
+
 static inline std::string printnz(int v, const char *s) {
     return (v > 0? std::to_string(v) + s : "");
 }
@@ -562,6 +597,7 @@ int main(int argc, char* const* argv)
             exit(EXIT_FAILURE);
         }
     }
+    dropPrivileges("nobody");
     node = getFQDN();
     if (liveInp && machineReadable) {
         // output every 100ms when piping to analysis/display program
