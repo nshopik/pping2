@@ -124,6 +124,11 @@ static double flowMaxIdle = 300.;   // flow idle time until flow forgotten
 static double sumInt = 10.;         // how often (sec) to print summary line
 static int maxFlows = 65535;
 static int flowCnt;
+// tsTbl size cap. ~830MB IPv4 / ~1.1GB IPv6 at the cap. Sized for ~4-8x
+// headroom over a 100-200K pps DNS workload (typical observed peak < 2M
+// entries) and ~3% of a 32GB host's RAM under hostile flood.
+static const size_t maxTSvals = 4000000;
+static int tsDropped;
 static double time_to_run;      // how many seconds to capture (0=no limit)
 static int maxPackets;          // max packets to capture (0=no limit)
 static int64_t offTm = -1;      // first packet capture time (used to
@@ -151,6 +156,13 @@ static int64_t nextFlush;       // next stdout flush time (~uS)
 
 static inline void addTS(const std::string& key, tsInfo* ti)
 {
+    // Drop-new at cap. Prevents unbounded growth from packet floods
+    // within a tsvalMaxAge window. Caller owns ti, so free it on drop.
+    if (tsTbl.size() >= maxTSvals && tsTbl.count(key) == 0) {
+        delete ti;
+        ++tsDropped;
+        return;
+    }
 #ifdef __cpp_lib_unordered_map_try_emplace
     tsTbl.try_emplace(key, ti);
 #else
@@ -467,6 +479,7 @@ static void printSummary()
                  printnz(uniDir, " uni-directional, ") +
                  printnz(not_tcp, " not TCP, ") +
                  printnz(not_v4or6, " not v4 or v6, ") +
+                 printnz(tsDropped, " tsTbl drops, ") +
                  "\n";
 }
 
@@ -606,15 +619,19 @@ int main(int argc, char* const* argv)
     nextFlush = clock_now() + flushInt;
 
     double nxtSum = 0., nxtClean = 0.;
+    int64_t totalPkts = 0;
+    struct timespec wallStart, wallEnd;
+    clock_gettime(CLOCK_MONOTONIC, &wallStart);
 
     for (const auto& packet : *snif) {
         process_packet(packet);
+        ++totalPkts;
 
         if ((time_to_run > 0. && capTm - startm >= time_to_run) ||
             (maxPackets > 0 && pktCnt >= maxPackets)) {
             printSummary();
-            std::cerr << "Captured " << pktCnt << " packets in "
-                      << (capTm - startm) << " seconds\n";
+            std::cerr << "capture-time: " << (capTm - startm)
+                      << "s, " << pktCnt << " packets\n";
             break;
         }
         if (capTm >= nxtSum && sumInt) {
@@ -625,6 +642,7 @@ int main(int argc, char* const* argv)
                 uniDir = 0;
                 not_tcp = 0;
                 not_v4or6 = 0;
+                tsDropped = 0;
             }
             nxtSum = capTm + sumInt;
 
@@ -633,6 +651,17 @@ int main(int argc, char* const* argv)
             cleanUp(capTm);  // get rid of stale entries
             nxtClean = capTm + tsvalMaxAge;
         }
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &wallEnd);
+    double wallSec = (wallEnd.tv_sec - wallStart.tv_sec) +
+                     (wallEnd.tv_nsec - wallStart.tv_nsec) * 1e-9;
+    if (totalPkts > 0 && wallSec > 0) {
+        fprintf(stderr,
+                "wall-clock: %.3fs, %" PRId64 " packets, %.1f ns/pkt, %.3f Mpps\n",
+                wallSec, totalPkts,
+                wallSec * 1e9 / totalPkts,
+                totalPkts / wallSec / 1e6);
     }
 
     exit(0);

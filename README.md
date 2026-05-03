@@ -86,11 +86,26 @@ interface its output should be redirected to a file or piped to a
 summarization or plotting utility. In the latter case, the `-m`
 (machine-friendly output format) might be useful.
 
+## Benchmarking ##
 
-## Output to Mongo database ##
+pping prints a wall-clock summary line to stderr at the end of every run:
+```
+wall-clock: 4.213s, 1000000 packets, 4213.0 ns/pkt, 0.237 Mpps
+```
+`ns/pkt` and `Mpps` are the same measurement (average over the run) in
+different units. Use this to size CPU budget against expected packet rates.
 
-pping can be set up to output to a Mongo database. The compile flag USE_DB
-must be set and the mongo c++ library installed
-(https://mongodb.github.io/mongo-cxx-driver/). Once a mongo database instance
-is running, pping is invoked with the -d flag and given the uri. If this is
-not of interest, don't compile with the USE_DB flag.
+To benchmark on a representative workload, capture from a real interface and
+replay through pping in file mode:
+```Shell
+sudo tcpdump -i eth0 -s 144 -c 1000000 -w bench.pcap tcp
+./pping -r bench.pcap > /dev/null
+```
+
+If you need to find where the time goes, profile with perf:
+```Shell
+perf record -F 999 -g -- ./pping -r bench.pcap > /dev/null
+perf report
+```
+
+
