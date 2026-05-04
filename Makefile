@@ -19,5 +19,11 @@ endif
 pping:  pping.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o pping pping.cpp $(LDFLAGS)
 
+check: pping test/unit_tests
+	@cd test && sh run_tests.sh
+
+test/unit_tests: test/unit_tests.cpp pping.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o test/unit_tests test/unit_tests.cpp $(LDFLAGS)
+
 clean:
-	rm pping
+	rm -f pping test/unit_tests

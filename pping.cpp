@@ -128,7 +128,7 @@ static int flowCnt;
 // tsTbl size cap. ~830MB IPv4 / ~1.1GB IPv6 at the cap. Sized for ~4-8x
 // headroom over a 100-200K pps DNS workload (typical observed peak < 2M
 // entries) and ~3% of a 32GB host's RAM under hostile flood.
-static const size_t maxTSvals = 4000000;
+static size_t maxTSvals = 4000000;
 static int tsDropped;
 // Set by SIGINT/SIGTERM handler to break the packet loop cleanly so the
 // end-of-run wall-clock summary still prints on Ctrl+C from live capture.
@@ -172,6 +172,8 @@ static inline void addTS(const std::string& key, tsInfo* ti)
 #else
     if (tsTbl.count(key) == 0) {
         tsTbl.emplace(key, ti);
+    } else {
+        delete ti;
     }
 #endif
 }
