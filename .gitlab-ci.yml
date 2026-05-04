@@ -1,0 +1,68 @@
+stages:
+  - build
+  - test
+
+variables:
+  LIBTINS_VERSION: "v4.4"
+  LIBTINS_PREFIX: "$CI_PROJECT_DIR/.libtins"
+
+# ---------------------------------------------------------------------------
+# Build stage: compile libtins (cached), then build pping binary
+# ---------------------------------------------------------------------------
+build:
+  stage: build
+  image: ubuntu:24.04
+  cache:
+    key: "libtins-$LIBTINS_VERSION"
+    paths:
+      - .libtins/
+    policy: pull-push
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y --no-install-recommends
+        build-essential cmake libpcap-dev libssl-dev pkg-config git ca-certificates
+    - |
+      if [ ! -f "$LIBTINS_PREFIX/lib/libtins.a" ] && \
+         [ ! -f "$LIBTINS_PREFIX/lib/libtins.so" ]; then
+        echo "libtins not in cache — building from source"
+        git clone --depth=1 --branch "$LIBTINS_VERSION" \
+          https://github.com/mfontanini/libtins.git /tmp/libtins-src
+        cmake -S /tmp/libtins-src -B /tmp/libtins-build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DLIBTINS_ENABLE_PCAP=1 \
+          -DCMAKE_INSTALL_PREFIX="$LIBTINS_PREFIX"
+        cmake --build /tmp/libtins-build --parallel "$(nproc)"
+        cmake --install /tmp/libtins-build
+      else
+        echo "libtins found in cache — skipping build"
+      fi
+  script:
+    - make LIBTINS="$LIBTINS_PREFIX"
+  artifacts:
+    name: "pping-$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - pping
+    expire_in: 1 week
+
+# ---------------------------------------------------------------------------
+# Test stage: compile unit tests, run full suite against cached artifact
+# ---------------------------------------------------------------------------
+test:
+  stage: test
+  image: ubuntu:24.04
+  cache:
+    key: "libtins-$LIBTINS_VERSION"
+    paths:
+      - .libtins/
+    policy: pull
+  dependencies:
+    - build
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y --no-install-recommends
+        build-essential libpcap-dev libssl-dev pkg-config
+  script:
+    # Build unit test binary (pping binary comes from build artifact)
+    - make LIBTINS="$LIBTINS_PREFIX" test/unit_tests
+    # Run the full test suite (integration + format + unit tests)
+    - cd test && sh run_tests.sh
