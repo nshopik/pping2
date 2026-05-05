@@ -87,12 +87,15 @@ existing flow-table cap matters more in practice. Two related changes:
   to bound growth — same convention as `flowMaxAge=0`). Values below
   1024 are rejected at startup; otherwise unbounded.
 
-- **`maxTSvals` default raised to `2,000,000,000`.** The prior
-  `4,000,000` was sized for 100–200 K pps; at 1 Mpps and beyond it
-  becomes the constraint. The new value is effectively unlimited —
-  `tsvalMaxAge` (10s default) and host memory become the natural
-  bound. Steady-state at 1 Mpps stays well under 1 GB. No CLI knob;
-  just a default bump.
+- **`maxTSvals` default raised to `268,435,456` (`16^7` = `2^28`,
+  256M binary).** The prior `4,000,000` was sized for 100–200 K pps;
+  at 1 Mpps and beyond it becomes the constraint. Worst-case memory
+  at the new cap (using the per-entry cost recorded in the existing
+  `pping.cpp` comment of ~207 B IPv4 / ~275 B IPv6): ~56 GB IPv4 /
+  ~74 GB IPv6. That's the theoretical ceiling — realistic steady-state
+  at 1 Mpps stays in the single-digit GB range, gated by `tsvalMaxAge`
+  (10s default) × TSval-tick-rate × concurrent TS-capable flow count.
+  No CLI knob; just a default bump.
 
 - **Rejection log rate-limited.** The existing per-rejection
   `std::cerr` line in `process_packet` (around line 422) is removed.
@@ -291,8 +294,9 @@ default `-r` mode (per-match emit), and *improvement* under `-r -a`.
 of the existing flowRec footprint (~96 B × 256K ≈ 24 MB total flowRec
 heap). Operators who set `--maxFlows=0` (unlimited) or a higher
 explicit value will scale memory linearly. Adjacent `maxTSvals` is
-raised to effectively unlimited (`2,000,000,000`); steady-state
-tsTbl memory at 1 Mpps with `tsvalMaxAge=10s` stays under 1 GB.
+raised to `268,435,456` (`16^7`, 256M binary); worst-case at the cap
+is ~56 GB IPv4 / ~74 GB IPv6, but realistic steady-state at 1 Mpps
+with `tsvalMaxAge=10s` stays in single-digit GB.
 
 **Output volume:** for a typical workload with ~20 RTT samples per flow,
 `-a` produces ~5% of the row count of `-e`. Exact ratio depends on
@@ -419,9 +423,12 @@ configurations: default (`-r`), `-r -e`, `-r -a`. Acceptance:
     grows proportionally on hosts whose live flow count was previously
     saturating the old cap. Operators on memory-constrained hosts can
     pin to the old default with `--maxFlows=65535`.
-  - `maxTSvals` default rises from 4M to 2B (effectively unlimited).
-    Hosts that were hitting `tsTbl drops` will see those go away;
-    memory bounded instead by `tsvalMaxAge` and host RAM.
+  - `maxTSvals` default rises from 4M to 256M (`16^7` = `2^28` =
+    268,435,456). Hosts that were hitting `tsTbl drops` will see
+    those go away; memory bounded instead by `tsvalMaxAge` and host
+    RAM. Worst-case memory at the new cap: ~56 GB IPv4 / ~74 GB IPv6
+    (theoretical ceiling; real workloads at 1 Mpps stay in single-
+    digit GB).
   - Per-rejection `flow limit (...) reached, dropping new flow: ...`
     stderr line is removed in favor of the summary-line counter.
     Operators relying on the old line for monitoring need to switch
