@@ -20,7 +20,11 @@ for pcap in dns-tcp-linux dns-tcp-windows mixed-with-retx; do
     for m in ts seq hybrid; do
         actual=$(mktemp)
         golden="$GOLDEN_DIR/$pcap.$m.golden"
-        "$PPING" -e --mode "$m" -r "$PCAPS_DIR/$pcap.pcap" > "$actual" 2>/dev/null
+        # Strip col 11 (node/hostname) so goldens are portable across machines.
+        # -e format: ts rtt minRTT fB dB pB srcIP sport dstIP dport node tag
+        "$PPING" -e --mode "$m" -r "$PCAPS_DIR/$pcap.pcap" 2>/dev/null \
+            | awk '{$11=""; gsub(/  +/, " "); print}' \
+            > "$actual"
         if diff -q "$golden" "$actual" >/dev/null 2>&1; then
             pass "$pcap/$m"
         else
