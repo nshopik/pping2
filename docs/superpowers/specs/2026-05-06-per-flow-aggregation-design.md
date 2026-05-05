@@ -75,12 +75,14 @@ intermediate ceiling adds no real protection.
 The aggregation feature stores per-flow accumulator state, so the
 existing flow-table cap matters more in practice. Two related changes:
 
-- **`maxFlows` default raised to `262144` (256K)** from the prior
-  `65535`. Justification: typical mirrored-port captures on busy hosts
-  (web frontends, internal switches) regularly exceed 65K concurrent
-  flows. Memory at full cap: ~96 B per flowRec × 256K plus
-  unordered_map overhead ≈ ~44 MB. Trivial on any host that runs
-  ClickHouse-adjacent tooling.
+- **`maxFlows` default raised to `1,048,576` (`1024^2`, 1M binary)**
+  from the prior `65535`. Justification: pping's single-thread
+  capture ceiling is in the 2–3 Mpps range on a modern core; even
+  in a hostile profile where every second packet opens a new flow,
+  1M concurrent flows is well past the realistic worst case. Memory
+  at full cap: ~96 B per flowRec × 1M plus unordered_map overhead
+  ≈ ~170 MB total. Trivial on any host that runs ClickHouse-adjacent
+  tooling.
 
 - **`--maxFlows=N` CLI knob.** Range `[1024, ∞)`. `0 = unlimited`
   (relies on host memory and the natural age-out via `flowMaxIdle`
@@ -161,11 +163,12 @@ bool     closed       = false;  // first FIN seen on this dir, or RST seen
                                 // on either dir (peer flag set via revFlowRec)
 ```
 
-Total ~16 bytes after struct padding. At the new `maxFlows = 262144`
-default cap, the accumulator portion adds ~4 MB on top of the existing
-flowRec footprint (~96 B per flow × 256K ≈ 24 MB total flowRec memory,
-plus unordered_map node overhead). Well within budget for any host
-that runs ClickHouse-adjacent tooling.
+Total ~16 bytes after struct padding. At the new `maxFlows = 1,048,576`
+(`1024^2`, 1M) default cap, the accumulator portion adds ~16 MB on
+top of the existing flowRec footprint (~96 B per flow × 1M ≈ 96 MB
+total flowRec heap, plus unordered_map node overhead bringing the
+combined total to ~170 MB). Well within budget for any host that
+runs ClickHouse-adjacent tooling.
 
 ### Hot-path edits in `process_packet`
 
@@ -290,13 +293,14 @@ re-run on `mixed-with-retx.pcap` with and without `-a` and confirm
 default `-r` mode (per-match emit), and *improvement* under `-r -a`.
 
 **Memory:** per-flow accumulator grows by ~16 bytes. At the new
-`maxFlows = 262144` default cap, accumulator memory adds ~4 MB on top
-of the existing flowRec footprint (~96 B × 256K ≈ 24 MB total flowRec
-heap). Operators who set `--maxFlows=0` (unlimited) or a higher
-explicit value will scale memory linearly. Adjacent `maxTSvals` is
-raised to `268,435,456` (`16^7`, 256M binary); worst-case at the cap
-is ~56 GB IPv4 / ~74 GB IPv6, but realistic steady-state at 1 Mpps
-with `tsvalMaxAge=10s` stays in single-digit GB.
+`maxFlows = 1,048,576` (`1024^2`, 1M) default cap, accumulator
+memory adds ~16 MB on top of the existing flowRec footprint
+(~96 B × 1M ≈ 96 MB total flowRec heap, ~170 MB combined with
+unordered_map overhead). Operators who set `--maxFlows=0` (unlimited)
+or a higher explicit value will scale memory linearly. Adjacent
+`maxTSvals` is raised to `268,435,456` (`16^7`, 256M binary);
+worst-case at the cap is ~56 GB IPv4 / ~74 GB IPv6, but realistic
+steady-state at 1 Mpps with `tsvalMaxAge=10s` stays in single-digit GB.
 
 **Output volume:** for a typical workload with ~20 RTT samples per flow,
 `-a` produces ~5% of the row count of `-e`. Exact ratio depends on
@@ -326,7 +330,7 @@ flow length distribution.
   `last_tm`. Window boundaries are implicit (gap between rows of the
   same 5-tuple). If you ever need explicit window start times, add
   `first_tm` as a 10th field — additive, not breaking.
-- **maxFlows pressure**: cap raised to 256K default with `--maxFlows`
+- **maxFlows pressure**: cap raised to 1M default with `--maxFlows`
   knob (see Capacity knobs). New flows still silently rejected when
   full; the prior per-rejection stderr line is replaced by a counter
   reported in the summary line. Existing aggregating flows continue
@@ -419,10 +423,11 @@ configurations: default (`-r`), `-r -e`, `-r -a`. Acceptance:
   pping versions can run side-by-side during rollout.
 - `-e` remains available for diagnostic / live-debug use indefinitely.
 - **Behavior changes that affect *all* users** (regardless of `-a`):
-  - `maxFlows` default rises from 65535 to 262144. Steady-state memory
-    grows proportionally on hosts whose live flow count was previously
-    saturating the old cap. Operators on memory-constrained hosts can
-    pin to the old default with `--maxFlows=65535`.
+  - `maxFlows` default rises from 65535 to 1,048,576 (`1024^2`, 1M).
+    Steady-state memory grows proportionally on hosts whose live flow
+    count was previously saturating the old cap. Operators on
+    memory-constrained hosts can pin to the old default with
+    `--maxFlows=65535`.
   - `maxTSvals` default rises from 4M to 256M (`16^7` = `2^28` =
     268,435,456). Hosts that were hitting `tsTbl drops` will see
     those go away; memory bounded instead by `tsvalMaxAge` and host
