@@ -27,3 +27,7 @@ test/unit_tests: test/unit_tests.cpp pping.cpp
 
 clean:
 	rm -f pping test/unit_tests
+
+# Regenerate test fixtures from test/synth/. Requires scapy.
+pcaps:
+	cd test && python3 -m synth.build
