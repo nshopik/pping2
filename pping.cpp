@@ -165,6 +165,17 @@ class flowRec
                         // match on TSval entry by reverse flow, i.e. the number of bytes
                         // departed through CP the last time an RTT was computed for this stream
     bool revFlow{};             //inidcates if a reverse flow has been seen
+
+    // SEQ-path state (used in --mode seq and --mode hybrid for non-TS flows)
+    uint32_t outstanding_end{0};   // expected ack; 0 = no measurement in flight
+    double   outstanding_time{0.}; // capTm at store
+    uint32_t high_seq{0};          // highest seq+eff_len seen forward
+    bool     high_seq_init{false}; // sentinel-safe across full uint32 range
+    bool     retx_flag{false};     // strict Karn: invalidate sample if set
+
+    // Set once on first packet through process_packet, then never modified.
+    bool     tsCapable{false};
+    bool     classified{false};
 };
 
 struct tsInfo {

@@ -255,6 +255,19 @@ static void test_seq_compare_wrap()
 }
 REGISTER_TEST(test_seq_compare_wrap);
 
+static void test_flowrec_seq_field_defaults()
+{
+    flowRec fr;
+    ASSERT_EQ((int)fr.outstanding_end, 0);
+    ASSERT_EQ(fr.outstanding_time, 0.0);
+    ASSERT_EQ((int)fr.high_seq, 0);
+    ASSERT_EQ(fr.high_seq_init, false);
+    ASSERT_EQ(fr.retx_flag, false);
+    ASSERT_EQ(fr.tsCapable, false);
+    ASSERT_EQ(fr.classified, false);
+}
+REGISTER_TEST(test_flowrec_seq_field_defaults);
+
 /* -------------------------------------------------------------------------
  * addTS / cleanUp — migrated to FlowKey/TsKey + tsInfo-by-value.
  * ---------------------------------------------------------------------- */
