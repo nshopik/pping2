@@ -123,6 +123,8 @@ static std::unordered_map<std::string, tsInfo*> tsTbl;
 static double tsvalMaxAge = 10.;    // limit age of TSvals to use
 static double flowMaxIdle = 300.;   // flow idle time until flow forgotten
 static double sumInt = 10.;         // how often (sec) to print summary line
+static bool sumExplicit = false;    // user passed -q/-v/--sumInt; suppresses
+                                    // the pcap-mode silent default below
 static int maxFlows = 65535;
 static int flowCnt;
 // tsTbl size cap. ~830MB IPv4 / ~1.1GB IPv6 at the cap. Sized for ~4-8x
@@ -546,7 +548,9 @@ static void help(const char* pname) {
 "\n"
 "  -q|--quiet         don't print summary reports to stderr\n"
 "\n"
-"  -v|--verbose       print summary reports to stderr every sumInt (10) seconds\n"
+"  -v|--verbose       print summary reports to stderr every sumInt (10) seconds.\n"
+"                     Summaries are on by default for live capture (-i) and off\n"
+"                     by default for pcap replay (-r); -v forces them on for -r.\n"
 "\n"
 "  -l|--showLocal     show RTTs through local host applications\n"
 "\n"
@@ -576,12 +580,12 @@ int main(int argc, char* const* argv)
         case 'f': filter += " and (" + std::string(optarg) + ")"; break;
         case 'c': maxPackets = atof(optarg); break;
         case 's': time_to_run = atof(optarg); break;
-        case 'q': sumInt = 0.; break;
-        case 'v': break; // summary on by default
+        case 'q': sumInt = 0.; sumExplicit = true; break;
+        case 'v': sumExplicit = true; break;
         case 'l': filtLocal = false; break;
         case 'm': machineReadable = true; break;
         case 'e': machineReadable = true; extendedMachineOutput = true; break;
-        case 'S': sumInt = atof(optarg); break;
+        case 'S': sumInt = atof(optarg); sumExplicit = true; break;
         case 'M': tsvalMaxAge = atof(optarg); break;
         case 'F': flowMaxIdle = atof(optarg); break;
         case 'h': help(argv[0]); exit(0);
@@ -590,6 +594,12 @@ int main(int argc, char* const* argv)
     if (optind < argc || fname.empty()) {
         usage(argv[0]);
         exit(1);
+    }
+    // pcap mode: 10s of capture-time can fly by in milliseconds of wall time,
+    // so the periodic summary spams the console. Default to silent unless the
+    // user explicitly asked for summaries via -q/-v/--sumInt.
+    if (!liveInp && !sumExplicit) {
+        sumInt = 0.;
     }
 
     BaseSniffer* snif;
