@@ -591,6 +591,14 @@ static void cleanUp(double n)
             flowCnt--;
             continue;
         }
+        // Age out unmatched SEQ-path outstanding measurements. Same threshold
+        // as the TS-path tsTbl entries.
+        if (fr->outstanding_end != 0 &&
+            capTm - fr->outstanding_time > tsvalMaxAge) {
+            fr->outstanding_end = 0;
+            fr->retx_flag       = false;
+            ++seqStale;
+        }
         ++it;
     }
 }
