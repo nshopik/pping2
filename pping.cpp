@@ -317,6 +317,44 @@ static int64_t clock_now(void) {
     return (int64_t(tv.tv_sec) << 20) | tv.tv_usec;
 }
 
+// Shared output helper for both the TS and SEQ paths. `tag` is 't' (TS path)
+// or 's' (SEQ path); always emitted for -e and human formats, omitted from -m.
+static void emit(double rtt, flowRec* fr, const FlowKey& fk,
+                 double fBytes, double dBytes, double pBytes, char tag)
+{
+    std::string ipsstr = ipToString(fk.srcIP, fk.af);
+    std::string ipdstr = ipToString(fk.dstIP, fk.af);
+
+    if (extendedMachineOutput) {
+        printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u %s %c\n",
+                int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
+                rtt, fr->min, fBytes, dBytes, pBytes,
+                ipsstr.c_str(), fk.sport,
+                ipdstr.c_str(), fk.dport,
+                node.c_str(),
+                tag);
+    } else if (machineReadable) {
+        printf("%" PRId64 ".%06d %.6f %s %s\n",
+                int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
+                rtt, ipsstr.c_str(), ipdstr.c_str());
+    } else {
+        std::time_t result = static_cast<std::time_t>(int64_t(capTm + offTm));
+        char tbuff[80];
+        struct tm* ptm = std::localtime(&result);
+        strftime(tbuff, 80, "%T", ptm);
+        printf("%s %s %s %s:%u+%s:%u [%c]\n",
+               tbuff, fmtTimeDiff(rtt).c_str(),
+               fmtTimeDiff(fr->min).c_str(),
+               ipsstr.c_str(), fk.sport, ipdstr.c_str(), fk.dport,
+               tag);
+    }
+    int64_t now = clock_now();
+    if (now - nextFlush >= 0) {
+        nextFlush = now + flushInt;
+        fflush(stdout);
+    }
+}
+
 static void process_packet(const Packet& pkt)
 {
     pktCnt++;
@@ -461,40 +499,8 @@ static void process_packet(const Packet& pkt)
             rit->second->bytesDep = fBytes;
         }
 
-        // Defer string construction to here — only on RTT match.
-        std::string ipsstr = ipToString(fk.srcIP, fk.af);
-        std::string ipdstr = ipToString(fk.dstIP, fk.af);
+        emit(rtt, fr, fk, fBytes, dBytes, pBytes, /*tag=*/'t');
 
-        if (extendedMachineOutput) {
-            printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u %s\n",
-                    int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
-                    rtt, fr->min, fBytes, dBytes, pBytes,
-                    ipsstr.c_str(), fk.sport,
-                    ipdstr.c_str(), fk.dport,
-                    node.c_str());
-        } else if (machineReadable) {
-            printf("%" PRId64 ".%06d %.6f %s %s\n",
-                    int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
-                    rtt, ipsstr.c_str(), ipdstr.c_str());
-        } else {
-            char tbuff[80];
-            struct tm* ptm = std::localtime(&result);
-            strftime(tbuff, 80, "%T", ptm);
-#ifdef notyet
-            printf("%s %s %s %d", tbuff, fmtTimeDiff(rtt).c_str(),
-                   fmtTimeDiff(fr->min).c_str(), (int)(fBytes - dBytes));
-#else
-            printf("%s %s %s", tbuff, fmtTimeDiff(rtt).c_str(),
-                   fmtTimeDiff(fr->min).c_str());
-#endif
-            printf(" %s:%u+%s:%u\n",
-                   ipsstr.c_str(), fk.sport, ipdstr.c_str(), fk.dport);
-        }
-        int64_t now = clock_now();
-        if (now - nextFlush >= 0) {
-            nextFlush = now + flushInt;
-            fflush(stdout);
-        }
         eit->second.t = -t;     //leaves an entry in the TS table to avoid saving
                                 // this TSval again; negative marks it consumed
     }
