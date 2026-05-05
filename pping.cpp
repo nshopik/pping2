@@ -300,14 +300,25 @@ static void process_packet(const Packet& pkt)
         not_tcp++;
         return;
     }
-    uint32_t rcv_tsval, rcv_tsecr;
-    try {
-        std::pair<uint32_t, uint32_t> tts = t_tcp->timestamp();
-        rcv_tsval = tts.first;
-        rcv_tsecr = tts.second;
-    } catch (std::exception&) {
+    // Decode the TCP timestamp option without exceptions. The previous
+    // t_tcp->timestamp() call threw option_not_found on every packet
+    // missing the option — on workloads with mostly non-TS traffic the
+    // exception unwinder (_Unwind_Find_FDE) and the malloc/free of the
+    // exception object dominated CPU. search_option returns a pointer
+    // (or nullptr) and never throws.
+    const auto* tsopt = t_tcp->search_option(TCP::TSOPT);
+    if (!tsopt || tsopt->data_size() < 8) {
         no_TS++;
         return;
+    }
+    uint32_t rcv_tsval, rcv_tsecr;
+    {
+        // The TS option payload is 8 bytes: 4B TSval + 4B TSecr, both in
+        // network byte order. memcpy is alignment-safe and gets folded into
+        // a single load by the optimizer on x86; portable to ARM strict-align.
+        uint32_t be;
+        std::memcpy(&be, tsopt->data_ptr(),     4); rcv_tsval = ntohl(be);
+        std::memcpy(&be, tsopt->data_ptr() + 4, 4); rcv_tsecr = ntohl(be);
     }
     if (rcv_tsval == 0 || (rcv_tsecr == 0 && (t_tcp->flags() != TCP::SYN))) {
         return;
