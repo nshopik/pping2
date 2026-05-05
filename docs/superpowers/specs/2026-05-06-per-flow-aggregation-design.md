@@ -28,7 +28,7 @@ per-match printf).
 - Strictly cheaper per-packet than today's per-match emit.
 - Bounded memory: per-flow accumulator stays small relative to the
   flowRec it lives in (~16 B added on top of ~80 B). The flow-table
-  cap is also being raised in this change (see Capacity knobs below)
+  cap is also being raised in this change (see Capacity defaults below)
   so accumulator memory scales with the new `maxFlows` ceiling.
 - Opt-in: today's `-e`, `-m`, and human-readable outputs continue
   bit-for-bit unchanged.
@@ -70,10 +70,11 @@ rejected at startup. No upper ceiling — operators who want very long
 windows already have `0=disabled` as the bigger footgun, so an
 intermediate ceiling adds no real protection.
 
-### Capacity knobs
+### Capacity defaults
 
 The aggregation feature stores per-flow accumulator state, so the
-existing flow-table cap matters more in practice. Two related changes:
+existing flow-table cap matters more in practice. Three related
+default changes (no new CLI knobs — keeping the surface area small):
 
 - **`maxFlows` default raised to `1,048,576` (`1024^2`, 1M binary)**
   from the prior `65535`. Justification: pping's single-thread
@@ -83,11 +84,6 @@ existing flow-table cap matters more in practice. Two related changes:
   at full cap: ~96 B per flowRec × 1M plus unordered_map overhead
   ≈ ~170 MB total. Trivial on any host that runs ClickHouse-adjacent
   tooling.
-
-- **`--maxFlows=N` CLI knob.** Range `[1024, ∞)`. `0 = unlimited`
-  (relies on host memory and the natural age-out via `flowMaxIdle`
-  to bound growth — same convention as `flowMaxAge=0`). Values below
-  1024 are rejected at startup; otherwise unbounded.
 
 - **`maxTSvals` default raised to `268,435,456` (`16^7` = `2^28`,
   256M binary).** The prior `4,000,000` was sized for 100–200 K pps;
@@ -296,9 +292,8 @@ default `-r` mode (per-match emit), and *improvement* under `-r -a`.
 `maxFlows = 1,048,576` (`1024^2`, 1M) default cap, accumulator
 memory adds ~16 MB on top of the existing flowRec footprint
 (~96 B × 1M ≈ 96 MB total flowRec heap, ~170 MB combined with
-unordered_map overhead). Operators who set `--maxFlows=0` (unlimited)
-or a higher explicit value will scale memory linearly. Adjacent
-`maxTSvals` is raised to `268,435,456` (`16^7`, 256M binary);
+unordered_map overhead). Adjacent `maxTSvals` is raised to
+`268,435,456` (`16^7`, 256M binary);
 worst-case at the cap is ~56 GB IPv4 / ~74 GB IPv6, but realistic
 steady-state at 1 Mpps with `tsvalMaxAge=10s` stays in single-digit GB.
 
@@ -330,17 +325,14 @@ flow length distribution.
   `last_tm`. Window boundaries are implicit (gap between rows of the
   same 5-tuple). If you ever need explicit window start times, add
   `first_tm` as a 10th field — additive, not breaking.
-- **maxFlows pressure**: cap raised to 1M default with `--maxFlows`
-  knob (see Capacity knobs). New flows still silently rejected when
-  full; the prior per-rejection stderr line is replaced by a counter
-  reported in the summary line. Existing aggregating flows continue
-  normally regardless of cap pressure.
+- **maxFlows pressure**: cap raised to 1M default (see Capacity defaults).
+  New flows still silently rejected when full; the prior per-rejection
+  stderr line is replaced by a counter reported in the summary line.
+  Existing aggregating flows continue normally regardless of cap
+  pressure.
 - **`flowMaxAge=0`** disables the age cap entirely. Long flows then
   flush only on FIN/RST/idle/shutdown. Memory still bounded by `maxFlows`,
   so safe; the trade-off is data freshness on truly long-lived flows.
-- **`maxFlows=0`** means unlimited — host memory and `flowMaxIdle`
-  natural age-out become the only bounds. Appropriate for hosts with
-  generous memory and traffic profiles that don't churn aggressively.
 
 ## Testing
 
@@ -425,9 +417,9 @@ configurations: default (`-r`), `-r -e`, `-r -a`. Acceptance:
 - **Behavior changes that affect *all* users** (regardless of `-a`):
   - `maxFlows` default rises from 65535 to 1,048,576 (`1024^2`, 1M).
     Steady-state memory grows proportionally on hosts whose live flow
-    count was previously saturating the old cap. Operators on
-    memory-constrained hosts can pin to the old default with
-    `--maxFlows=65535`.
+    count was previously saturating the old cap. The cap is a static
+    default (no CLI knob); recompiling pping is the way to change it
+    on hosts with unusual constraints.
   - `maxTSvals` default rises from 4M to 256M (`16^7` = `2^28` =
     268,435,456). Hosts that were hitting `tsTbl drops` will see
     those go away; memory bounded instead by `tsvalMaxAge` and host
