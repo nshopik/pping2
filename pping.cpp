@@ -458,6 +458,11 @@ static void process_packet(const Packet& pkt)
     }
     fr->last_tm = capTm;
 
+    if (!fr->classified) {
+        fr->tsCapable = (tsopt != nullptr);
+        fr->classified = true;
+    }
+
     if (! fr->revFlow) {
         uniDir++;
         return;
