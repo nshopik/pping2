@@ -62,6 +62,7 @@ fi
 run_test "$SCRIPT_DIR/test_integration.sh"
 run_test "$SCRIPT_DIR/test_format.sh"
 run_test "$SCRIPT_DIR/test_seq.sh"
+run_test "$SCRIPT_DIR/cross_mode_check.sh"
 
 # Summary
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
