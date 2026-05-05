@@ -146,6 +146,12 @@ static inline bool seq_lt(uint32_t a, uint32_t b) noexcept {
 static inline bool seq_geq(uint32_t a, uint32_t b) noexcept {
     return int32_t(a - b) >= 0;
 }
+// TCP payload length from a libtins TCP PDU. inner_pdu()->size() if present;
+// otherwise zero (pure ACK / SYN / FIN / RST). Safe on truncated frames.
+static inline uint32_t tcp_payload_len(const TCP* t_tcp) noexcept {
+    const PDU* inner = t_tcp->inner_pdu();
+    return inner ? static_cast<uint32_t>(inner->size()) : 0u;
+}
 
 class flowRec
 {
@@ -499,10 +505,42 @@ static void process_packet(const Packet& pkt)
         }
     }
 
-    // SEQ path: filled in by Tasks 11 and 12.
-    (void)useSeq;
-    (void)t_tcp;
-    (void)toLocal;
+    if (useSeq) {
+        const uint32_t seq    = t_tcp->seq();
+        const auto     flags  = t_tcp->flags();
+        const uint32_t pay    = tcp_payload_len(t_tcp);
+        const uint32_t eff_len = pay
+                               + ((flags & TCP::SYN) ? 1u : 0u)
+                               + ((flags & TCP::FIN) ? 1u : 0u);
+
+        // Forward direction: open or refresh outstanding measurement
+        if (eff_len > 0 && !toLocal) {
+            const uint32_t end = seq + eff_len;
+            if (!fr->high_seq_init) {
+                // First forward data packet — seed retx baseline and open
+                // the outstanding measurement on this flow.
+                fr->high_seq          = end;
+                fr->high_seq_init     = true;
+                fr->outstanding_end   = end;
+                fr->outstanding_time  = capTm;
+                fr->retx_flag         = false;
+            } else if (seq_lt(seq, fr->high_seq)) {
+                // Retransmission of bytes already seen forward.
+                if (fr->outstanding_end != 0) fr->retx_flag = true;
+            } else {
+                if (seq_geq(end, fr->high_seq)) fr->high_seq = end;
+                if (fr->outstanding_end == 0) {
+                    fr->outstanding_end  = end;
+                    fr->outstanding_time = capTm;
+                    fr->retx_flag        = false;
+                }
+                // else: in-flight data while a measurement is pending — do
+                // nothing (one outstanding per direction).
+            }
+        }
+
+        // Reverse-match step is added in Task 12.
+    }
 }
 
 static void cleanUp(double n)
