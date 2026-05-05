@@ -243,12 +243,15 @@ static void test_seq_compare_wrap()
     ASSERT_EQ(seq_geq(small, near_max), true);
 
     // Half-window edge case: a and b are exactly 2^31 apart. RFC 1323 leaves
-    // this undefined; the implementation computes int32_t(a - b) < 0, which
-    // for b = a + 2^31 yields INT32_MIN < 0 == true, so seq_lt returns true.
+    // this undefined. int32_t(a - b) = INT32_MIN: seq_lt(a,b) treats it as
+    // "less than" (INT32_MIN < 0 is true). Symmetrically, seq_geq(b, a)
+    // computes int32_t(b - a) = INT32_MIN >= 0, which is false — so
+    // seq_geq is NOT the boolean negation of seq_lt at this exact boundary.
+    // Both assertions lock the current implementation behavior.
     const uint32_t a = 0x10000000u;
     const uint32_t b = a + 0x80000000u; // exactly 2^31 ahead
     ASSERT_EQ(seq_lt(a, b), true);
-    ASSERT_EQ(seq_geq(b, a), true);
+    ASSERT_EQ(seq_geq(b, a), false);
 }
 REGISTER_TEST(test_seq_compare_wrap);
 
