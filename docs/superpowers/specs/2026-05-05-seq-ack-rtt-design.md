@@ -87,11 +87,19 @@ RTT line.
 
 ### Summary stats
 
-Two new counters alongside `no_TS`:
+One new production counter and two diagnostic counters, all alongside `no_TS`:
 
-- `seq_samples` — RTT samples emitted via SEQ path
-- `seq_karn_drops` — samples discarded because the outstanding window was retransmitted (strict Karn)
-- `seq_stale` — outstanding measurements aged out unmatched (parallel to `tsDropped`)
+- `seq_samples` — RTT samples emitted via SEQ path. Production-relevant: gives
+  a sense of how much measurement coverage the SEQ path is providing on the
+  workload. Always informative when non-zero.
+- `seq_karn_drops` — samples discarded because the outstanding window was
+  retransmitted (strict Karn). Diagnostic only.
+- `seq_stale` — outstanding measurements aged out unmatched (parallel to
+  `tsDropped`). Diagnostic only.
+
+All three use the existing `printnz()` pattern, so diagnostic counters are
+invisible in normal operation and only surface in the summary when non-zero.
+No new verbosity flag needed.
 
 In `hybrid` mode `no_TS` semantics shift from "packets dropped" to "packets
 that fell through to SEQ path." Help text documents this.
@@ -275,22 +283,30 @@ No special-case code needed.
 
 ### Test fixtures
 
-Three pcaps in `tests/pcaps/`:
+Three pcaps in `tests/pcaps/`, **synthesized** via a checked-in Python +
+scapy script in `tests/synth/` with fixed RNG seeds for deterministic ISNs.
+This lets the pcaps be regenerated on demand and swapped for real captures
+later without reworking goldens — just rerun `synth/build.py`.
 
-1. **`dns-tcp-windows.pcap`** — DNS-over-TCP from a Windows resolver to a
-   recursive (no TSopt). Validates the headline use case. Should produce
-   SEQ-path samples in `--mode hybrid` and `--mode seq`, and `no_TS` drops
-   in `--mode ts`.
+1. **`dns-tcp-windows.pcap`** — ~50 packets, 5 distinct flows. DNS-over-TCP
+   shape (SYN, SYN+ACK, ACK, query, server-ACK, response, client-ACK, FIN,
+   FIN+ACK, ACK), Windows-style TCP options (MSS + SACK-Permitted + Window
+   Scale, **no** Timestamp option). Validates the headline use case. Should
+   produce SEQ-path samples in `--mode hybrid` and `--mode seq`, and `no_TS`
+   drops in `--mode ts`.
 
-2. **`dns-tcp-linux.pcap`** — same flow shape but Linux resolver (TSopt
-   present). Should produce identical RTT samples in both `--mode ts` and
-   `--mode hybrid` (TS preempts SEQ on these flows). Cross-mode RTT delta
-   should be 0.
+2. **`dns-tcp-linux.pcap`** — ~50 packets, 5 distinct flows. Same flow shape
+   but with TCP Timestamp option present. Should produce identical RTT
+   samples in both `--mode ts` and `--mode hybrid` (TS preempts SEQ on these
+   flows). Cross-mode RTT delta should be 0.
 
-3. **`mixed-with-retx.pcap`** — synthesized via `tc netem` with injected
-   loss containing retransmissions of known timing. Validates Karn drops
-   the affected sample, `seq_karn_drops` increments, no spurious RTT
-   outliers in output.
+3. **`mixed-with-retx.pcap`** — ~120 packets, 3 flows. One flow includes a
+   retransmitted segment occurring while a measurement is in flight. Other
+   two flows act as clean controls. Validates strict Karn drops the affected
+   sample, `seq_karn_drops` increments, no spurious low/high-RTT outliers
+   in output, and that minRTT for the affected flow is not polluted.
+
+Total ~220 packets across all three pcaps; comfortable to commit, no LFS.
 
 ### Golden output
 
