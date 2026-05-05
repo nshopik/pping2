@@ -279,6 +279,42 @@ write state, just reads).
 RST without payload has `eff_len == 0`, so they don't touch outstanding state.
 No special-case code needed.
 
+### IPv4 fragmentation
+
+Fragmentation is rare in TCP (MSS negotiation avoids it) but handled cleanly:
+
+- **Non-first fragments** carry no TCP header. libtins's `find_pdu<TCP>()`
+  returns nullptr → existing `not_tcp++` path skips them. Both modes
+  unaffected.
+- **First fragments** of a fragmented TCP segment carry the TCP header and
+  a partial payload. Our `eff_len` is computed from the visible payload,
+  under-counting the real segment length. The reverse ACK acks the full
+  reassembled length (`> outstanding_end`), so `seq_geq` still matches and
+  the SEQ path still emits a sample. RTT is slightly fuzzy (includes
+  inter-fragment spread, typically microseconds) but not wrong. TS path
+  is unaffected because TSval/TSecr matching does not depend on `seq+len`.
+
+No special-case code is needed for either subcase.
+
+### Malformed TCP packets
+
+The SEQ path adds no new attack surface vs. the TS path — same libtins
+parser, same nullptr / `data_size()` guards, same graceful degradation:
+
+| Input | Behavior |
+|---|---|
+| Truncated TCP header (`doff` > available bytes) | `find_pdu<TCP>()` returns nullptr → `not_tcp++`, skip |
+| Truncated TS option (`< 8` bytes) | existing `tsopt->data_size()` guard → `no_TS++`, skip |
+| Invalid flag combinations (SYN+FIN, SYN+RST) | `eff_len` computed naively; real endpoints reject, no ACK matches, outstanding ages out via `cleanUp` |
+| Garbage seq/ack values | tracked verbatim; ages out via `cleanUp` if no match |
+| Truncated / zero-length frames | `find_pdu<IP>()` / `find_pdu<IPv6>()` return nullptr → `not_v4or6++`, skip |
+| Crafted retx flood from spoofed source | `retx_flag` set, sample dropped (denial of measurement, not corruption) |
+| Overlong / malformed TCP options | libtins option parser is bounded by `doff`; our `data_size()` check is the second line of defense |
+
+Failure mode for any case the parser accepts but protocol semantics reject:
+the outstanding measurement simply never finds a match and ages out via
+`cleanUp` after `tsvalMaxAge`. No corruption, no leak, bounded state.
+
 ## Testing
 
 ### Test fixtures
