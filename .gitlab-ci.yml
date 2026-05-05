@@ -3,7 +3,7 @@ stages:
   - test
 
 variables:
-  LIBTINS_VERSION: "v4.4"
+  LIBTINS_VERSION: "v4.5"
   LIBTINS_PREFIX: "$CI_PROJECT_DIR/.libtins"
 
 # ---------------------------------------------------------------------------
