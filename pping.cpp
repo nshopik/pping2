@@ -137,6 +137,16 @@ struct ByteHash {
     }
 };
 
+// Wrap-safe TCP sequence-number comparison. Treats a, b as points on a
+// 2^32 cycle; correct as long as |a - b| < 2^31 (RFC 1323 PAWS bound).
+// Used unconditionally on the SEQ-path hot path; cost is sub/sign-compare.
+static inline bool seq_lt(uint32_t a, uint32_t b) noexcept {
+    return int32_t(a - b) < 0;
+}
+static inline bool seq_geq(uint32_t a, uint32_t b) noexcept {
+    return int32_t(a - b) >= 0;
+}
+
 class flowRec
 {
   public:
