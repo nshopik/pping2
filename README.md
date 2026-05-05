@@ -86,6 +86,36 @@ interface its output should be redirected to a file or piped to a
 summarization or plotting utility. In the latter case, the `-m`
 (machine-friendly output format) might be useful.
 
+## Measurement modes
+
+pping has two RTT measurement paths and a hybrid that combines them:
+
+- **TS path** (TCP timestamp option, RFC 7323): the original method. Works on
+  Linux/BSD/macOS. Flows without timestamps (Windows, stripped-TS middleboxes)
+  produce no samples.
+- **SEQ path** (TCP sequence/acknowledgement numbers): works on every TCP flow.
+  Tracks one outstanding `(seq + len, capture_time)` per flow direction;
+  matches when the reverse ACK reaches that boundary; drops samples whose
+  forward window was retransmitted (strict Karn).
+
+Select with `--mode {ts,seq,hybrid}` (default: `hybrid`).
+
+```Shell
+./pping --mode ts     -r capture.pcap   # legacy TS-only
+./pping --mode seq    -r capture.pcap   # SEQ on every flow (ignores TSopt)
+./pping --mode hybrid -r capture.pcap   # TS where available, SEQ otherwise
+```
+
+`-e` extended output adds a 12th field — `t` (TS path) or `s` (SEQ path) —
+appended after `node`. Human-readable output gains a trailing `[t]`/`[s]`
+tag. The compact `-m` format is unchanged.
+
+The summary line gains three new counters when non-zero:
+`<n> seq samples,` `<n> seq karn drops,` `<n> seq stale,`.
+
+In `--mode hybrid` the `no_TS` counter reports flows that were redirected to
+the SEQ path, not flows that were dropped.
+
 ## Benchmarking ##
 
 In file mode (`-r`), pping prints a wall-clock summary line to stderr at the
