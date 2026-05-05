@@ -77,20 +77,72 @@
 #include <unordered_map>
 #include <utility>
 #include <cmath>
+#include <array>
+#include <cstring>
 #include "tins/tins.h"
 
 using namespace Tins;
 
+// Packed POD key for flow lookup. 40B total: 16+16+2+2+1 = 37 named bytes,
+// then 3B trailing pad after `af`. Default member initializers zero everything
+// (including _pad), so `FlowKey k;` produces a key whose padding bytes are
+// guaranteed zero — required so memcmp/ByteHash agree across construction sites.
+struct FlowKey {
+    std::array<uint8_t, 16> srcIP{};   // v4 in first 4 bytes, rest zero
+    std::array<uint8_t, 16> dstIP{};
+    uint16_t sport = 0;
+    uint16_t dport = 0;
+    uint8_t  af = 0;                   // 4 or 6 — disambiguates v4 from v6
+    uint8_t  _pad[3] = {0, 0, 0};      // explicit pad — must remain zero
+
+    bool operator==(const FlowKey& o) const noexcept {
+        return std::memcmp(this, &o, sizeof(FlowKey)) == 0;
+    }
+    FlowKey reversed() const noexcept {
+        FlowKey r;
+        r.srcIP = dstIP;
+        r.dstIP = srcIP;
+        r.sport = dport;
+        r.dport = sport;
+        r.af = af;
+        return r;
+    }
+};
+static_assert(sizeof(FlowKey) == 40, "FlowKey size changed; tests rely on this");
+
+// FlowKey + tsval. 40 + 4 named + 4B pad = 48B. Same zero-pad invariant.
+struct TsKey {
+    FlowKey flow{};
+    uint32_t tsval = 0;
+    uint8_t  _pad[4] = {0, 0, 0, 0};
+
+    bool operator==(const TsKey& o) const noexcept {
+        return std::memcmp(this, &o, sizeof(TsKey)) == 0;
+    }
+};
+static_assert(sizeof(TsKey) == 48, "TsKey size changed; tests rely on this");
+
+// FNV-1a over the raw bytes of T. Padding participates — that's why the
+// zero-pad invariant above is load-bearing.
+struct ByteHash {
+    template<class T>
+    size_t operator()(const T& k) const noexcept {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(&k);
+        size_t h = 14695981039346656037ULL;
+        for (size_t i = 0; i < sizeof(T); ++i) {
+            h ^= p[i];
+            h *= 1099511628211ULL;
+        }
+        return h;
+    }
+};
+
 class flowRec
 {
   public:
-    explicit flowRec(std::string nm)
-    {
-        flowname = std::move(nm);
-    };
+    flowRec() = default;
     ~flowRec() = default;
 
-    std::string flowname;
     double last_tm{};
     double min{1e30};   // current min value for capturepoint-to-source RTT
     double bytesSnt{};  // number of bytes sent through CP toward dst
@@ -105,19 +157,33 @@ class flowRec
     bool revFlow{};             //inidcates if a reverse flow has been seen
 };
 
-class tsInfo
-{
-  public:
-    explicit tsInfo(double tm, double f, double d)
-        : t{tm}, fBytes{f}, dBytes{d} {};
-    ~tsInfo() {};
-    double t;       //wall clock time of new TSval pkt arrival
+struct tsInfo {
+    double t;       //wall clock time of new TSval pkt arrival (negated after match)
     double fBytes;  //total bytes of flow through CP including this pkt
-    double dBytes;  //total bytes of in
+    double dBytes;  //total bytes departed
 };
 
-static std::unordered_map<std::string, flowRec*> flows;
-static std::unordered_map<std::string, tsInfo*> tsTbl;
+static std::unordered_map<FlowKey, flowRec*, ByteHash> flows;
+static std::unordered_map<TsKey, tsInfo, ByteHash> tsTbl;
+
+// Format a 16-byte IP slot (per af) as a printable string. Called only on the
+// rare/print paths — never on the hot per-packet path.
+static inline std::string ipToString(const std::array<uint8_t, 16>& bytes, uint8_t af)
+{
+    if (af == 4) {
+        uint32_t ip_n;
+        std::memcpy(&ip_n, bytes.data(), 4);
+        return IPv4Address(ip_n).to_string();
+    }
+    return IPv6Address(bytes.data()).to_string();
+}
+
+// Human-readable "src:port+dst:port". Errors + human output only.
+static inline std::string flowKeyName(const FlowKey& k)
+{
+    return ipToString(k.srcIP, k.af) + ":" + std::to_string(k.sport)
+         + "+" + ipToString(k.dstIP, k.af) + ":" + std::to_string(k.dport);
+}
 
 #define SNAP_LEN 144                // maximum bytes per packet to capture
 static double tsvalMaxAge = 10.;    // limit age of TSvals to use
@@ -145,7 +211,9 @@ static bool extendedMachineOutput = false;   // extended machine output with all
 static double capTm, startm;        // (in seconds)
 static int pktCnt, not_tcp, no_TS, not_v4or6, uniDir;
 static std::string node;            // FQDN hostname of this capture node
-static std::string localIP;         // ignore pp through this address
+static std::string localIP;         // ignore pp through this address (display form)
+static std::array<uint8_t, 16> localIPBytes{}; // packed form for hot-path compare
+static uint8_t localIPaf = 0;       // 4 or 6 once localIP is parsed
 static bool filtLocal = true;
 static std::string filter("tcp");    // default bpf filter
 static int64_t flushInt = 1 << 20;  // stdout flush interval (~uS)
@@ -160,24 +228,18 @@ static int64_t nextFlush;       // next stdout flush time (~uS)
 // ending tcp_seq to match against returned tcp_ack) but this can
 // substantially increase the state burden for a small improvement.
 
-static inline void addTS(const std::string& key, tsInfo* ti)
+static inline void addTS(const TsKey& key, const tsInfo& ti)
 {
-    // Drop-new at cap. Prevents unbounded growth from packet floods
-    // within a tsvalMaxAge window. Caller owns ti, so free it on drop.
-    if (tsTbl.size() >= maxTSvals && tsTbl.count(key) == 0) {
-        delete ti;
-        ++tsDropped;
+    // Drop-new at cap: only allow no-op updates to existing keys (try_emplace
+    // wouldn't insert anyway). Storage is by-value so there's no pointer to
+    // leak on the dup-key path — that's the TODO #2 fix folded into this PR.
+    if (tsTbl.size() >= maxTSvals) {
+        if (tsTbl.find(key) == tsTbl.end()) {
+            ++tsDropped;
+        }
         return;
     }
-#ifdef __cpp_lib_unordered_map_try_emplace
     tsTbl.try_emplace(key, ti);
-#else
-    if (tsTbl.count(key) == 0) {
-        tsTbl.emplace(key, ti);
-    } else {
-        delete ti;
-    }
-#endif
 }
 
 // A packet's ECR (timestamp echo reply) should match the TSval of some
@@ -194,16 +256,6 @@ static inline void addTS(const std::string& key, tsInfo* ti)
 // are deleted after a time interval (tsvalMaxAge) that should be:
 //  a) longer than the largest time between TSval ticks
 //  b) longer than longest queue wait packets are expected to experience
-
-static inline tsInfo* getTStm(const std::string& key)
-{
-    try {
-        tsInfo* ti = tsTbl.at(key);
-        return ti;
-    } catch (std::out_of_range&) {
-        return nullptr;
-    }
-}
 
 static std::string fmtTimeDiff(double dt)
 {
@@ -242,9 +294,6 @@ static int64_t clock_now(void) {
 
 static void process_packet(const Packet& pkt)
 {
-    u_int32_t rcv_tsval, rcv_tsecr;
-    std::string srcstr, dststr, ipsstr, ipdstr;
-
     pktCnt++;
     // all packets should be TCP since that's in config
     const TCP* t_tcp;
@@ -252,6 +301,7 @@ static void process_packet(const Packet& pkt)
         not_tcp++;
         return;
     }
+    uint32_t rcv_tsval, rcv_tsecr;
     try {
         std::pair<uint32_t, uint32_t> tts = t_tcp->timestamp();
         rcv_tsval = tts.first;
@@ -264,21 +314,30 @@ static void process_packet(const Packet& pkt)
         return;
     }
 
+    // Build FlowKey directly from packet bytes — no string allocation on
+    // the hot path. Default member initializers zero the pad bytes.
+    FlowKey fk;
     const IP* ip;
     const IPv6* ipv6;
     if ((ip = pkt.pdu()->find_pdu<IP>()) != nullptr) {
-        ipsstr = ip->src_addr().to_string();
-        ipdstr = ip->dst_addr().to_string();
+        uint32_t s = ip->src_addr();   // libtins IPv4Address → uint32_t (net order)
+        uint32_t d = ip->dst_addr();
+        std::memcpy(fk.srcIP.data(), &s, 4);
+        std::memcpy(fk.dstIP.data(), &d, 4);
+        fk.af = 4;
     } else if ((ipv6 = pkt.pdu()->find_pdu<IPv6>()) != nullptr) {
-        ipsstr = ipv6->src_addr().to_string();
-        ipdstr = ipv6->dst_addr().to_string();
+        IPv6Address sa = ipv6->src_addr();
+        IPv6Address da = ipv6->dst_addr();
+        std::copy(sa.begin(), sa.end(), fk.srcIP.begin());
+        std::copy(da.begin(), da.end(), fk.dstIP.begin());
+        fk.af = 6;
     } else {
         not_v4or6++;
         return;
     }
-    // Reach here with a TCP packet with timestamp option
-    srcstr = ipsstr + ":" + std::to_string(t_tcp->sport());
-    dststr = ipdstr + ":" + std::to_string(t_tcp->dport());
+    fk.sport = t_tcp->sport();
+    fk.dport = t_tcp->dport();
+
     // process capture clock time
     std::time_t result = pkt.timestamp().seconds();
     if (offTm < 0) {
@@ -296,27 +355,32 @@ static void process_packet(const Packet& pkt)
         capTm = double(tt) + double(pkt.timestamp().microseconds()) * 1e-6;
     }
 
-    std::string fstr = srcstr + "+" + dststr;  // could add DSCP field to key
-    // Creates a flowRec entry whenever needed
+    const FlowKey rk = fk.reversed();
+
+    // Single try_emplace per packet for the forward flow lookup.
+    auto fres = flows.try_emplace(fk, nullptr);
+    auto fit = fres.first;
+    bool inserted = fres.second;
     flowRec* fr;
-    if (flows.count(fstr) == 0u) {
+    if (inserted) {
         if (flowCnt >= maxFlows) {
-            std::cerr << "flow limit (" << maxFlows << ") reached, dropping new flow: " << fstr << "\n";
+            std::cerr << "flow limit (" << maxFlows << ") reached, dropping new flow: "
+                      << flowKeyName(fk) << "\n";
+            flows.erase(fit);
             return;
         }
-        fr = new flowRec(fstr);
+        fr = new flowRec();
+        fit->second = fr;
         flowCnt++;
-        flows.emplace(fstr, fr);
-
-        // only want to record tsvals when capturing both directions
-        // of a flow. if this flow is the reverse of a known flow,
-        // mark both as bi-directional.
-        if (flows.count(dststr + "+" + srcstr) != 0u) {
-            flows.at(dststr + "+" + srcstr)->revFlow = true;
+        // only want to record tsvals when capturing both directions of a flow.
+        // if this flow is the reverse of a known flow, mark both bi-directional.
+        auto rit = flows.find(rk);
+        if (rit != flows.end()) {
+            rit->second->revFlow = true;
             fr->revFlow = true;
         }
     } else {
-        fr = flows.at(fstr);
+        fr = fit->second;
     }
     fr->last_tm = capTm;
 
@@ -327,32 +391,50 @@ static void process_packet(const Packet& pkt)
 
     double arr_fwd = fr->bytesSnt + pkt.pdu()->size();
     fr->bytesSnt = arr_fwd;
-    if (!filtLocal || (localIP != ipdstr)) {
-        addTS(fstr + "+" + std::to_string(rcv_tsval),
-              new tsInfo(capTm, arr_fwd, fr->bytesDep));
+
+    // filtLocal: skip storing TSval for packets going to the local host.
+    // localIPBytes/af were parsed from localIP once at startup.
+    bool toLocal = filtLocal && localIPaf == fk.af
+                && std::memcmp(localIPBytes.data(), fk.dstIP.data(), 16) == 0;
+    if (!toLocal) {
+        TsKey tk;
+        tk.flow = fk;
+        tk.tsval = rcv_tsval;
+        addTS(tk, tsInfo{capTm, arr_fwd, fr->bytesDep});
     }
-    tsInfo* ti = getTStm(dststr + "+" + srcstr + "+" +
-                         std::to_string(rcv_tsecr));
-    if (ti && ti->t > 0.0) {
-	// this packet is the return "pping" --
-        // process it for packet's src
-        double t = ti->t;
+
+    TsKey lookup;
+    lookup.flow = rk;
+    lookup.tsval = rcv_tsecr;
+    auto eit = tsTbl.find(lookup);
+    if (eit != tsTbl.end() && eit->second.t > 0.0) {
+        // this packet is the return "pping" -- process it for packet's src
+        double t = eit->second.t;
         double rtt = capTm - t;
         if (fr->min > rtt) {
             fr->min = rtt;       //track minimum
         }
-        double fBytes = ti->fBytes;
-        double dBytes = ti->dBytes;
+        double fBytes = eit->second.fBytes;
+        double dBytes = eit->second.dBytes;
         double pBytes = arr_fwd - fr->lstBytesSnt;
         fr->lstBytesSnt = arr_fwd;
-        flows.at(dststr + "+" + srcstr)->bytesDep = fBytes;
+        // Update reverse flow's bytesDep — necessary lookup since the reverse
+        // flow's iterator wasn't cached above.
+        auto rit = flows.find(rk);
+        if (rit != flows.end()) {
+            rit->second->bytesDep = fBytes;
+        }
+
+        // Defer string construction to here — only on RTT match.
+        std::string ipsstr = ipToString(fk.srcIP, fk.af);
+        std::string ipdstr = ipToString(fk.dstIP, fk.af);
 
         if (extendedMachineOutput) {
             printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u %s\n",
                     int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
                     rtt, fr->min, fBytes, dBytes, pBytes,
-                    ipsstr.c_str(), t_tcp->sport(),
-                    ipdstr.c_str(), t_tcp->dport(),
+                    ipsstr.c_str(), fk.sport,
+                    ipdstr.c_str(), fk.dport,
                     node.c_str());
         } else if (machineReadable) {
             printf("%" PRId64 ".%06d %.6f %s %s\n",
@@ -369,25 +451,25 @@ static void process_packet(const Packet& pkt)
             printf("%s %s %s", tbuff, fmtTimeDiff(rtt).c_str(),
                    fmtTimeDiff(fr->min).c_str());
 #endif
-            printf(" %s\n", fstr.c_str());
+            printf(" %s:%u+%s:%u\n",
+                   ipsstr.c_str(), fk.sport, ipdstr.c_str(), fk.dport);
         }
         int64_t now = clock_now();
         if (now - nextFlush >= 0) {
             nextFlush = now + flushInt;
             fflush(stdout);
         }
-        ti->t = -t;     //leaves an entry in the TS table to avoid saving this
-                        // TSval again, mark it negative to indicate it's been used
+        eit->second.t = -t;     //leaves an entry in the TS table to avoid saving
+                                // this TSval again; negative marks it consumed
     }
 }
 
 static void cleanUp(double n)
 {
     // erase entry if its TSval was seen more than tsvalMaxAge
-    // seconds in the past. 
+    // seconds in the past.
     for (auto it = tsTbl.begin(); it != tsTbl.end();) {
-        if (capTm - std::abs(it->second->t) > tsvalMaxAge) {
-            delete it->second;
+        if (capTm - std::abs(it->second.t) > tsvalMaxAge) {
             it = tsTbl.erase(it);
         } else {
             ++it;
@@ -618,6 +700,17 @@ int main(int argc, char* const* argv)
                     if (localIP.empty()) {
                         // couldn't get local ip addr
                         filtLocal = false;
+                    } else {
+                        // Pre-parse localIP into packed bytes so the per-packet
+                        // filter compares 16 bytes instead of std::string.
+                        // localAddrOf only returns IPv4 today (see its XXX note).
+                        try {
+                            uint32_t ip_n = IPv4Address(localIP);
+                            std::memcpy(localIPBytes.data(), &ip_n, 4);
+                            localIPaf = 4;
+                        } catch (std::exception&) {
+                            filtLocal = false;
+                        }
                     }
                 }
             } else {

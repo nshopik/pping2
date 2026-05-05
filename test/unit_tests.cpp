@@ -115,45 +115,182 @@ static void test_printnz()
 }
 REGISTER_TEST(test_printnz);
 
+/* -------------------------------------------------------------------------
+ * Helpers for building keys in tests.
+ * ---------------------------------------------------------------------- */
+
+static FlowKey makeFlow4(uint8_t s_a, uint8_t s_b, uint8_t s_c, uint8_t s_d,
+                         uint8_t d_a, uint8_t d_b, uint8_t d_c, uint8_t d_d,
+                         uint16_t sport, uint16_t dport)
+{
+    FlowKey k;
+    k.srcIP = {{s_a, s_b, s_c, s_d}};
+    k.dstIP = {{d_a, d_b, d_c, d_d}};
+    k.sport = sport;
+    k.dport = dport;
+    k.af = 4;
+    return k;
+}
+
+static TsKey makeTs4(uint8_t s_a, uint8_t s_b, uint8_t s_c, uint8_t s_d,
+                     uint8_t d_a, uint8_t d_b, uint8_t d_c, uint8_t d_d,
+                     uint16_t sport, uint16_t dport, uint32_t tsv)
+{
+    TsKey k;
+    k.flow = makeFlow4(s_a, s_b, s_c, s_d, d_a, d_b, d_c, d_d, sport, dport);
+    k.tsval = tsv;
+    return k;
+}
+
+/* -------------------------------------------------------------------------
+ * FlowKey / TsKey / ByteHash invariants
+ * ---------------------------------------------------------------------- */
+
+static void test_flowkey_padding()
+{
+    // Sizes are baked into the on-the-wire hash function. If they change,
+    // every running pping that shares state (none today) would disagree —
+    // but more importantly, _pad shifting silently breaks ByteHash equality.
+    static_assert(sizeof(FlowKey) == 40, "FlowKey size guard");
+    static_assert(sizeof(TsKey) == 48,   "TsKey size guard");
+
+    // Same logical key constructed via two independent default-init paths
+    // must be byte-identical. If padding leaks stack garbage, this fails.
+    FlowKey k1 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80);
+    FlowKey k2 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80);
+
+    ASSERT_EQ(std::memcmp(&k1, &k2, sizeof(FlowKey)), 0);
+    ASSERT_EQ(k1 == k2, true);
+
+    ByteHash h;
+    ASSERT_EQ(h(k1), h(k2));
+
+    // The pad bytes themselves: walk from `af` forward and verify all-zero.
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(&k1);
+    // af is at offset 16+16+2+2 = 36; pad starts at 37
+    for (size_t i = 37; i < sizeof(FlowKey); ++i) {
+        ASSERT_EQ((int)p[i], 0);
+    }
+
+    // Same for TsKey: tsval at offset 40-43, pad at 44-47.
+    TsKey t1 = makeTs4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80, 555);
+    const uint8_t* tp = reinterpret_cast<const uint8_t*>(&t1);
+    for (size_t i = 44; i < sizeof(TsKey); ++i) {
+        ASSERT_EQ((int)tp[i], 0);
+    }
+}
+REGISTER_TEST(test_flowkey_padding);
+
+static void test_flowkey_reversed()
+{
+    FlowKey k = makeFlow4(10, 0, 0, 1, 192, 168, 1, 1, 12345, 443);
+    FlowKey r = k.reversed();
+
+    ASSERT_EQ(r.srcIP == k.dstIP, true);
+    ASSERT_EQ(r.dstIP == k.srcIP, true);
+    ASSERT_EQ((int)r.sport, (int)k.dport);
+    ASSERT_EQ((int)r.dport, (int)k.sport);
+    ASSERT_EQ((int)r.af,    (int)k.af);
+
+    // round-trip: reversed().reversed() == original (byte-exact)
+    FlowKey rr = r.reversed();
+    ASSERT_EQ(std::memcmp(&rr, &k, sizeof(FlowKey)), 0);
+}
+REGISTER_TEST(test_flowkey_reversed);
+
+static void test_flowkey_v4_v6_disambig()
+{
+    // Same first 4 IP bytes; only `af` differs. memcmp must NOT report equal.
+    // Without the af field, a v4 key 1.2.3.4 and a v6 key starting 01:02:03:04::
+    // would collide (both have zero in the trailing 12 bytes for v4).
+    FlowKey v4;
+    v4.srcIP = {{1, 2, 3, 4}};
+    v4.dstIP = {{5, 6, 7, 8}};
+    v4.sport = 100;
+    v4.dport = 200;
+    v4.af = 4;
+
+    FlowKey v6 = v4;     // copy entire struct including padding
+    v6.af = 6;           // only difference
+
+    ASSERT_EQ(v4 == v6, false);
+
+    // Hashes will essentially always differ — FNV-1a is sensitive to a
+    // single-byte change. Treat equality as a regression worth flagging.
+    ByteHash h;
+    if (h(v4) == h(v6)) {
+        std::fprintf(stderr,
+            "  unexpected: v4 and v6 keys hashed equal (byte difference at af)\n");
+        ++g_failures;
+    }
+}
+REGISTER_TEST(test_flowkey_v4_v6_disambig);
+
+/* -------------------------------------------------------------------------
+ * addTS / cleanUp — migrated to FlowKey/TsKey + tsInfo-by-value.
+ * ---------------------------------------------------------------------- */
+
 static void test_addTS()
 {
     // --- Scenario 1: first-write-wins ---
     tsTbl.clear();
     tsDropped = 0;
 
-    addTS("flow+1000", new tsInfo(1.0, 0, 0));
-    addTS("flow+1000", new tsInfo(2.0, 0, 0));
+    TsKey k = makeTs4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2, 1000);
+    addTS(k, tsInfo{1.0, 0, 0});
+    addTS(k, tsInfo{2.0, 0, 0});
 
-    ASSERT_EQ(tsTbl["flow+1000"]->t, 1.0);    // first write preserved
-    ASSERT_EQ(tsTbl.size(), (size_t)1);        // no duplicate entry
+    ASSERT_EQ(tsTbl.at(k).t, 1.0);     // first write preserved
+    ASSERT_EQ(tsTbl.size(), (size_t)1); // no duplicate entry
 
-    // clean up scenario 1 before the cap test
-    for (auto& kv : tsTbl) delete kv.second;
     tsTbl.clear();
     tsDropped = 0;
 
     // --- Scenario 2: drop-at-cap ---
-    // Override the cap to a small value so we don't allocate 4M objects.
     size_t savedMax = maxTSvals;
     maxTSvals = 5;
 
     for (size_t i = 0; i < maxTSvals; ++i) {
-        tsTbl.emplace("fill+" + std::to_string(i), new tsInfo(0.0, 0, 0));
+        TsKey kfill = makeTs4((uint8_t)i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        tsTbl.emplace(kfill, tsInfo{0.0, 0, 0});
     }
-    ASSERT_EQ(tsTbl.size(), maxTSvals);               // table is at cap
+    ASSERT_EQ(tsTbl.size(), maxTSvals);
 
-    addTS("overflow+0", new tsInfo(99.0, 0, 0));
+    TsKey ovr = makeTs4(99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    addTS(ovr, tsInfo{99.0, 0, 0});
 
-    ASSERT_EQ(tsDropped, 1);                          // drop counter incremented
-    ASSERT_EQ(tsTbl.count("overflow+0"), (size_t)0);  // key was not inserted
-    ASSERT_EQ(tsTbl.size(), maxTSvals);               // size unchanged
+    ASSERT_EQ(tsDropped, 1);
+    ASSERT_EQ(tsTbl.count(ovr), (size_t)0);
+    ASSERT_EQ(tsTbl.size(), maxTSvals);
 
-    // clean up and restore
-    for (auto& kv : tsTbl) delete kv.second;
     tsTbl.clear();
     maxTSvals = savedMax;
 }
 REGISTER_TEST(test_addTS);
+
+static void test_addTS_no_leak_on_duplicate()
+{
+    // The pre-rewrite addTS() leaked tsInfo* on the duplicate-key path
+    // (TODO #2). With by-value storage there's no pointer to leak — the
+    // leak is structurally impossible. This test asserts the observable
+    // consequences: duplicates don't grow size, and first-write wins.
+    tsTbl.clear();
+    tsDropped = 0;
+
+    TsKey k = makeTs4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2, 1000);
+    addTS(k, tsInfo{1.0, 100, 50});
+    addTS(k, tsInfo{2.0, 200, 60});   // duplicate
+    addTS(k, tsInfo{3.0, 300, 70});   // duplicate
+
+    ASSERT_EQ(tsTbl.size(), (size_t)1);
+    ASSERT_EQ(tsTbl.at(k).t, 1.0);
+    ASSERT_EQ(tsTbl.at(k).fBytes, 100.0);  // payload from first write
+    ASSERT_EQ(tsTbl.at(k).dBytes, 50.0);
+    ASSERT_EQ(tsDropped, 0);
+
+    tsTbl.clear();
+}
+REGISTER_TEST(test_addTS_no_leak_on_duplicate);
 
 static void test_cleanUp()
 {
@@ -167,21 +304,22 @@ static void test_cleanUp()
     flowCnt = 0;
 
     capTm = 100.0;
+    TsKey stale = makeTs4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2, 1);
+    TsKey fresh = makeTs4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2, 2);
+    TsKey used  = makeTs4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2, 3);
     // age = 100 - 85 = 15 > 10  →  evicted
-    tsTbl["stale+1"] = new tsInfo(85.0, 0.0, 0.0);
+    tsTbl[stale] = tsInfo{85.0, 0.0, 0.0};
     // age = 100 - 95 = 5 < 10   →  survives
-    tsTbl["fresh+1"] = new tsInfo(95.0, 0.0, 0.0);
+    tsTbl[fresh] = tsInfo{95.0, 0.0, 0.0};
     // negative t means "already used"; abs(-88)=88, age = 100-88 = 12 > 10 → evicted
-    tsTbl["used+1"]  = new tsInfo(-88.0, 0.0, 0.0);
+    tsTbl[used]  = tsInfo{-88.0, 0.0, 0.0};
 
     cleanUp(100.0);
 
-    ASSERT_EQ(tsTbl.count("stale+1"), 0u);
-    ASSERT_EQ(tsTbl.count("used+1"),  0u);
-    ASSERT_EQ(tsTbl.count("fresh+1"), 1u);
+    ASSERT_EQ(tsTbl.count(stale), 0u);
+    ASSERT_EQ(tsTbl.count(used),  0u);
+    ASSERT_EQ(tsTbl.count(fresh), 1u);
 
-    // clean up the surviving entry to avoid leaks
-    delete tsTbl["fresh+1"];
     tsTbl.clear();
 
     // -----------------------------------------------------------------
@@ -194,26 +332,25 @@ static void test_cleanUp()
     flows.clear();
     flowCnt = 0;
 
-    // idle = 800 - 500 = 300 == flowMaxIdle  →  NOT > 300, survives
-    flowRec* fr1 = new flowRec("10.0.0.1:1+10.0.0.2:2");
+    FlowKey f1 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr1 = new flowRec();
     fr1->last_tm = 500.0;
-    flows["10.0.0.1:1+10.0.0.2:2"] = fr1;
+    flows[f1] = fr1;
 
-    // idle = 800 - 499 = 301 > flowMaxIdle   →  evicted
-    flowRec* fr2 = new flowRec("10.0.0.1:1+10.0.0.3:3");
+    FlowKey f2 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 3, 1, 3);
+    flowRec* fr2 = new flowRec();
     fr2->last_tm = 499.0;
-    flows["10.0.0.1:1+10.0.0.3:3"] = fr2;
+    flows[f2] = fr2;
 
     flowCnt = 2;
 
     cleanUp(800.0);
 
-    ASSERT_EQ(flows.count("10.0.0.1:1+10.0.0.2:2"), 1u);
-    ASSERT_EQ(flows.count("10.0.0.1:1+10.0.0.3:3"), 0u);
+    ASSERT_EQ(flows.count(f1), 1u);   // idle == 300, survives
+    ASSERT_EQ(flows.count(f2), 0u);   // idle == 301, evicted
     ASSERT_EQ(flowCnt, 1);
 
-    // clean up the surviving flow
-    delete flows["10.0.0.1:1+10.0.0.2:2"];
+    delete flows[f1];
     flows.clear();
     flowCnt = 0;
 }
