@@ -137,6 +137,22 @@ struct ByteHash {
     }
 };
 
+// Wrap-safe TCP sequence-number comparison. Treats a, b as points on a
+// 2^32 cycle; correct as long as |a - b| < 2^31 (RFC 1323 PAWS bound).
+// Used unconditionally on the SEQ-path hot path; cost is sub/sign-compare.
+static inline bool seq_lt(uint32_t a, uint32_t b) noexcept {
+    return int32_t(a - b) < 0;
+}
+static inline bool seq_geq(uint32_t a, uint32_t b) noexcept {
+    return int32_t(a - b) >= 0;
+}
+// TCP payload length from a libtins TCP PDU. inner_pdu()->size() if present;
+// otherwise zero (pure ACK / SYN / FIN / RST). Safe on truncated frames.
+static inline uint32_t tcp_payload_len(const TCP* t_tcp) noexcept {
+    const PDU* inner = t_tcp->inner_pdu();
+    return inner ? static_cast<uint32_t>(inner->size()) : 0u;
+}
+
 class flowRec
 {
   public:
@@ -155,6 +171,22 @@ class flowRec
                         // match on TSval entry by reverse flow, i.e. the number of bytes
                         // departed through CP the last time an RTT was computed for this stream
     bool revFlow{};             //inidcates if a reverse flow has been seen
+    // Peer flowRec* — set when both directions are first observed, nulled on
+    // peer expiry. Lets the SEQ ACK fast-path skip the per-packet flows.find(rk).
+    // revFlow stays sticky-true for the TS-path early-return logic; revFlowRec
+    // is lifecycle-managed because it must never dangle.
+    flowRec* revFlowRec{nullptr};
+
+    // SEQ-path state (used in --mode seq and --mode hybrid for non-TS flows)
+    uint32_t outstanding_end{0};   // expected ack; 0 = no measurement in flight
+    double   outstanding_time{0.}; // capTm at store
+    uint32_t high_seq{0};          // highest seq+eff_len seen forward
+    bool     high_seq_init{false}; // sentinel-safe across full uint32 range
+    bool     retx_flag{false};     // strict Karn: invalidate sample if set
+
+    // Set once on first packet through process_packet, then never modified.
+    bool     tsCapable{false};
+    bool     classified{false};
 };
 
 struct tsInfo {
@@ -198,6 +230,11 @@ static int flowCnt;
 // entries) and ~3% of a 32GB host's RAM under hostile flood.
 static size_t maxTSvals = 4000000;
 static int tsDropped;
+static int seqSamples;     // production: RTT samples emitted via SEQ path
+static int seqKarnDrops;   // diagnostic: samples discarded by strict Karn
+static int seqStale;       // diagnostic: outstanding measurements aged out
+enum class Mode { TS, SEQ, HYBRID };
+static Mode mode = Mode::HYBRID;
 // Set by SIGINT/SIGTERM handler to break the packet loop cleanly so the
 // end-of-run wall-clock summary still prints on Ctrl+C from live capture.
 static volatile sig_atomic_t stopRequested = 0;
@@ -291,46 +328,59 @@ static int64_t clock_now(void) {
     return (int64_t(tv.tv_sec) << 20) | tv.tv_usec;
 }
 
+// Shared output helper for both the TS and SEQ paths. `tag` is 't' (TS path)
+// or 's' (SEQ path); always emitted for -e and human formats, omitted from -m.
+static void emit(double rtt, flowRec* fr, const FlowKey& fk,
+                 double fBytes, double dBytes, double pBytes, char tag)
+{
+    std::string ipsstr = ipToString(fk.srcIP, fk.af);
+    std::string ipdstr = ipToString(fk.dstIP, fk.af);
+
+    if (extendedMachineOutput) {
+        printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u %s %c\n",
+                int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
+                rtt, fr->min, fBytes, dBytes, pBytes,
+                ipsstr.c_str(), fk.sport,
+                ipdstr.c_str(), fk.dport,
+                node.c_str(),
+                tag);
+    } else if (machineReadable) {
+        printf("%" PRId64 ".%06d %.6f %s %s\n",
+                int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
+                rtt, ipsstr.c_str(), ipdstr.c_str());
+    } else {
+        std::time_t result = static_cast<std::time_t>(int64_t(capTm + offTm));
+        char tbuff[80];
+        struct tm* ptm = std::localtime(&result);
+        strftime(tbuff, 80, "%T", ptm);
+        printf("%s %s %s %s:%u+%s:%u [%c]\n",
+               tbuff, fmtTimeDiff(rtt).c_str(),
+               fmtTimeDiff(fr->min).c_str(),
+               ipsstr.c_str(), fk.sport, ipdstr.c_str(), fk.dport,
+               tag);
+    }
+    int64_t now = clock_now();
+    if (now - nextFlush >= 0) {
+        nextFlush = now + flushInt;
+        fflush(stdout);
+    }
+}
+
 static void process_packet(const Packet& pkt)
 {
     pktCnt++;
-    // all packets should be TCP since that's in config
     const TCP* t_tcp;
     if ((t_tcp = pkt.pdu()->find_pdu<TCP>()) == nullptr) {
         not_tcp++;
         return;
     }
-    // Decode the TCP timestamp option without exceptions. The previous
-    // t_tcp->timestamp() call threw option_not_found on every packet
-    // missing the option — on workloads with mostly non-TS traffic the
-    // exception unwinder (_Unwind_Find_FDE) and the malloc/free of the
-    // exception object dominated CPU. search_option returns a pointer
-    // (or nullptr) and never throws.
-    const auto* tsopt = t_tcp->search_option(TCP::TSOPT);
-    if (!tsopt || tsopt->data_size() < 8) {
-        no_TS++;
-        return;
-    }
-    uint32_t rcv_tsval, rcv_tsecr;
-    {
-        // The TS option payload is 8 bytes: 4B TSval + 4B TSecr, both in
-        // network byte order. memcpy is alignment-safe and gets folded into
-        // a single load by the optimizer on x86; portable to ARM strict-align.
-        uint32_t be;
-        std::memcpy(&be, tsopt->data_ptr(),     4); rcv_tsval = ntohl(be);
-        std::memcpy(&be, tsopt->data_ptr() + 4, 4); rcv_tsecr = ntohl(be);
-    }
-    if (rcv_tsval == 0 || (rcv_tsecr == 0 && (t_tcp->flags() != TCP::SYN))) {
-        return;
-    }
 
-    // Build FlowKey directly from packet bytes — no string allocation on
-    // the hot path. Default member initializers zero the pad bytes.
+    // FlowKey + IP/IPv6 selection (unchanged)
     FlowKey fk;
     const IP* ip;
     const IPv6* ipv6;
     if ((ip = pkt.pdu()->find_pdu<IP>()) != nullptr) {
-        uint32_t s = ip->src_addr();   // libtins IPv4Address → uint32_t (net order)
+        uint32_t s = ip->src_addr();
         uint32_t d = ip->dst_addr();
         std::memcpy(fk.srcIP.data(), &s, 4);
         std::memcpy(fk.dstIP.data(), &d, 4);
@@ -348,26 +398,21 @@ static void process_packet(const Packet& pkt)
     fk.sport = t_tcp->sport();
     fk.dport = t_tcp->dport();
 
-    // process capture clock time
-    std::time_t result = pkt.timestamp().seconds();
+    // capture clock time (unchanged)
     if (offTm < 0) {
         offTm = static_cast<int64_t>(pkt.timestamp().seconds());
-        // fractional part of first usable packet time
         startm = double(pkt.timestamp().microseconds()) * 1e-6;
         capTm = startm;
         if (sumInt) {
+            std::time_t first = pkt.timestamp().seconds();
             std::cerr << "First packet at "
-                      << std::asctime(std::localtime(&result)) << "\n";
+                      << std::asctime(std::localtime(&first)) << "\n";
         }
     } else {
-        // offset capture time
         int64_t tt = static_cast<int64_t>(pkt.timestamp().seconds()) - offTm;
         capTm = double(tt) + double(pkt.timestamp().microseconds()) * 1e-6;
     }
 
-    const FlowKey rk = fk.reversed();
-
-    // Single try_emplace per packet for the forward flow lookup.
     auto fres = flows.try_emplace(fk, nullptr);
     auto fit = fres.first;
     bool inserted = fres.second;
@@ -382,95 +427,165 @@ static void process_packet(const Packet& pkt)
         fr = new flowRec();
         fit->second = fr;
         flowCnt++;
-        // only want to record tsvals when capturing both directions of a flow.
-        // if this flow is the reverse of a known flow, mark both bi-directional.
+        // Reverse-flow lookup runs only on first-packet-of-flow, not per-packet.
+        const FlowKey rk = fk.reversed();
         auto rit = flows.find(rk);
         if (rit != flows.end()) {
             rit->second->revFlow = true;
+            rit->second->revFlowRec = fr;
             fr->revFlow = true;
+            fr->revFlowRec = rit->second;
         }
     } else {
         fr = fit->second;
     }
     fr->last_tm = capTm;
 
-    if (! fr->revFlow) {
+    // Defer TSOPT parse until after flow classification: only first-packet
+    // (to set tsCapable) or subsequent packets of TS-capable flows need it.
+    // Non-TS flows in --mode seq/hybrid skip the option search entirely.
+    bool tsopt_present = false;
+    uint32_t rcv_tsval = 0, rcv_tsecr = 0;
+    if (!fr->classified || fr->tsCapable) {
+        const auto* tsopt = t_tcp->search_option(TCP::TSOPT);
+        tsopt_present = (tsopt && tsopt->data_size() >= 8);
+        if (tsopt_present) {
+            uint32_t be;
+            std::memcpy(&be, tsopt->data_ptr(),     4); rcv_tsval = ntohl(be);
+            std::memcpy(&be, tsopt->data_ptr() + 4, 4); rcv_tsecr = ntohl(be);
+        }
+    }
+
+    // Classify the flow on its first packet (set once, never changes).
+    if (!fr->classified) {
+        fr->tsCapable = tsopt_present;
+        fr->classified = true;
+    }
+
+    if (!fr->revFlow) {
         uniDir++;
         return;
     }
-
     double arr_fwd = fr->bytesSnt + pkt.pdu()->size();
     fr->bytesSnt = arr_fwd;
 
-    // filtLocal: skip storing TSval for packets going to the local host.
-    // localIPBytes/af were parsed from localIP once at startup.
-    bool toLocal = filtLocal && localIPaf == fk.af
-                && std::memcmp(localIPBytes.data(), fk.dstIP.data(), 16) == 0;
-    if (!toLocal) {
-        TsKey tk;
-        tk.flow = fk;
-        tk.tsval = rcv_tsval;
-        addTS(tk, tsInfo{capTm, arr_fwd, fr->bytesDep});
+    // Mode dispatch.
+    const bool useSeq =
+        (mode == Mode::SEQ) ||
+        (mode == Mode::HYBRID && !fr->tsCapable);
+    const bool useTs =
+        (mode == Mode::TS && fr->tsCapable) ||
+        (mode == Mode::HYBRID && fr->tsCapable);
+
+    if (mode == Mode::TS && !fr->tsCapable) {
+        // Today's behavior in --mode ts: count and drop.
+        no_TS++;
+        return;
     }
 
-    TsKey lookup;
-    lookup.flow = rk;
-    lookup.tsval = rcv_tsecr;
-    auto eit = tsTbl.find(lookup);
-    if (eit != tsTbl.end() && eit->second.t > 0.0) {
-        // this packet is the return "pping" -- process it for packet's src
-        double t = eit->second.t;
-        double rtt = capTm - t;
-        if (fr->min > rtt) {
-            fr->min = rtt;       //track minimum
+    bool toLocal = filtLocal && localIPaf == fk.af
+                && std::memcmp(localIPBytes.data(), fk.dstIP.data(), 16) == 0;
+
+    if (useTs) {
+        // Existing TS path: preserves the rcv_tsval / rcv_tsecr sanity checks.
+        if (rcv_tsval == 0 || (rcv_tsecr == 0 && (t_tcp->flags() != TCP::SYN))) {
+            return;
         }
-        double fBytes = eit->second.fBytes;
-        double dBytes = eit->second.dBytes;
-        double pBytes = arr_fwd - fr->lstBytesSnt;
-        fr->lstBytesSnt = arr_fwd;
-        // Update reverse flow's bytesDep — necessary lookup since the reverse
-        // flow's iterator wasn't cached above.
-        auto rit = flows.find(rk);
-        if (rit != flows.end()) {
-            rit->second->bytesDep = fBytes;
+        if (!toLocal) {
+            TsKey tk;
+            tk.flow = fk;
+            tk.tsval = rcv_tsval;
+            addTS(tk, tsInfo{capTm, arr_fwd, fr->bytesDep});
+        }
+        TsKey lookup;
+        lookup.flow = fk.reversed();
+        lookup.tsval = rcv_tsecr;
+        auto eit = tsTbl.find(lookup);
+        if (eit != tsTbl.end() && eit->second.t > 0.0) {
+            double t = eit->second.t;
+            double rtt = capTm - t;
+            if (fr->min > rtt) fr->min = rtt;
+            double fBytes = eit->second.fBytes;
+            double dBytes = eit->second.dBytes;
+            double pBytes = arr_fwd - fr->lstBytesSnt;
+            fr->lstBytesSnt = arr_fwd;
+            // Use the cached reverse-flow pointer; null when peer expired
+            // (equivalent to the prior flows.find(rk) miss). Note: if the peer
+            // expires and is later re-created with the same FlowKey, the cached
+            // pointer stays null until *this* flow itself is re-inserted (the
+            // linkage at line ~434 only fires on the inserted branch). The
+            // original flows.find(rk) would have re-discovered the recycled
+            // peer and written bytesDep to a fresh-but-unrelated flowRec; the
+            // new behavior is strictly more conservative.
+            if (fr->revFlowRec) fr->revFlowRec->bytesDep = fBytes;
+            emit(rtt, fr, fk, fBytes, dBytes, pBytes, /*tag=*/'t');
+            eit->second.t = -t;
+        }
+    }
+
+    if (useSeq) {
+        const uint32_t seq    = t_tcp->seq();
+        const auto     flags  = t_tcp->flags();
+        const uint32_t pay    = tcp_payload_len(t_tcp);
+        const uint32_t eff_len = pay
+                               + ((flags & TCP::SYN) ? 1u : 0u)
+                               + ((flags & TCP::FIN) ? 1u : 0u);
+
+        // Forward direction: open or refresh outstanding measurement
+        if (eff_len > 0 && !toLocal) {
+            const uint32_t end = seq + eff_len;
+            if (!fr->high_seq_init) {
+                // First forward data packet — seed retx baseline and open
+                // the outstanding measurement on this flow.
+                fr->high_seq          = end;
+                fr->high_seq_init     = true;
+                fr->outstanding_end   = end;
+                fr->outstanding_time  = capTm;
+                fr->retx_flag         = false;
+            } else if (seq_lt(seq, fr->high_seq)) {
+                // Retransmission of bytes already seen forward.
+                if (fr->outstanding_end != 0) fr->retx_flag = true;
+            } else {
+                if (seq_geq(end, fr->high_seq)) fr->high_seq = end;
+                if (fr->outstanding_end == 0) {
+                    fr->outstanding_end  = end;
+                    fr->outstanding_time = capTm;
+                    fr->retx_flag        = false;
+                }
+                // else: in-flight data while a measurement is pending — do
+                // nothing (one outstanding per direction).
+            }
         }
 
-        // Defer string construction to here — only on RTT match.
-        std::string ipsstr = ipToString(fk.srcIP, fk.af);
-        std::string ipdstr = ipToString(fk.dstIP, fk.af);
+        // Reverse direction: ACK that crosses the outstanding boundary closes
+        // the in-flight measurement on the forward (reverse-of-this-packet) flow.
+        if (flags & TCP::ACK) {
+            const uint32_t ack = t_tcp->ack_seq();
+            // Cached reverse-flow pointer; replaces a per-ACK flows.find(rk).
+            // Null when the peer has expired (cleanUp unlinks before delete).
+            flowRec* rr = fr->revFlowRec;
+            if (rr && rr->outstanding_end != 0 && seq_geq(ack, rr->outstanding_end)) {
+                const double rtt        = capTm - rr->outstanding_time;
+                const bool   karn_clean = !rr->retx_flag;
+                rr->outstanding_end = 0;
+                rr->retx_flag       = false;
+                if (karn_clean) {
+                    if (rr->min > rtt) rr->min = rtt;
+                    ++seqSamples;
 
-        if (extendedMachineOutput) {
-            printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u %s\n",
-                    int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
-                    rtt, fr->min, fBytes, dBytes, pBytes,
-                    ipsstr.c_str(), fk.sport,
-                    ipdstr.c_str(), fk.dport,
-                    node.c_str());
-        } else if (machineReadable) {
-            printf("%" PRId64 ".%06d %.6f %s %s\n",
-                    int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
-                    rtt, ipsstr.c_str(), ipdstr.c_str());
-        } else {
-            char tbuff[80];
-            struct tm* ptm = std::localtime(&result);
-            strftime(tbuff, 80, "%T", ptm);
-#ifdef notyet
-            printf("%s %s %s %d", tbuff, fmtTimeDiff(rtt).c_str(),
-                   fmtTimeDiff(fr->min).c_str(), (int)(fBytes - dBytes));
-#else
-            printf("%s %s %s", tbuff, fmtTimeDiff(rtt).c_str(),
-                   fmtTimeDiff(fr->min).c_str());
-#endif
-            printf(" %s:%u+%s:%u\n",
-                   ipsstr.c_str(), fk.sport, ipdstr.c_str(), fk.dport);
+                    // The RTT belongs to the forward (rr) flow; emit using
+                    // its key. The fk in this scope is the reverse direction.
+                    FlowKey ffk = fk.reversed();
+                    const double fBytes = rr->bytesSnt;
+                    const double dBytes = rr->bytesDep;
+                    const double pBytes = rr->bytesSnt - rr->lstBytesSnt;
+                    rr->lstBytesSnt = rr->bytesSnt;
+                    emit(rtt, rr, ffk, fBytes, dBytes, pBytes, /*tag=*/'s');
+                } else {
+                    ++seqKarnDrops;
+                }
+            }
         }
-        int64_t now = clock_now();
-        if (now - nextFlush >= 0) {
-            nextFlush = now + flushInt;
-            fflush(stdout);
-        }
-        eit->second.t = -t;     //leaves an entry in the TS table to avoid saving
-                                // this TSval again; negative marks it consumed
     }
 }
 
@@ -488,10 +603,20 @@ static void cleanUp(double n)
     for (auto it = flows.begin(); it != flows.end();) {
         flowRec* fr = it->second;
         if (n - fr->last_tm > flowMaxIdle) {
+            // Unlink peer's cached pointer before delete to avoid dangling.
+            if (fr->revFlowRec) fr->revFlowRec->revFlowRec = nullptr;
             delete it->second;
             it = flows.erase(it);
             flowCnt--;
             continue;
+        }
+        // Age out unmatched SEQ-path outstanding measurements. Same threshold
+        // as the TS-path tsTbl entries.
+        if (fr->outstanding_end != 0 &&
+            capTm - fr->outstanding_time > tsvalMaxAge) {
+            fr->outstanding_end = 0;
+            fr->retx_flag       = false;
+            ++seqStale;
         }
         ++it;
     }
@@ -582,6 +707,9 @@ static void printSummary()
                  printnz(not_tcp, " not TCP, ") +
                  printnz(not_v4or6, " not v4 or v6, ") +
                  printnz(tsDropped, " tsTbl drops, ") +
+                 printnz(seqSamples, " seq samples, ") +
+                 printnz(seqKarnDrops, " seq karn drops, ") +
+                 printnz(seqStale, " seq stale, ") +
                  "\n";
 }
 
@@ -600,6 +728,7 @@ static struct option opts[] = {
     { "tsvalMaxAge", required_argument, nullptr, 'M' },
     { "flowMaxIdle", required_argument, nullptr, 'F' },
     { "help",      no_argument,       nullptr, 'h' },
+    { "mode",      required_argument, nullptr,  0  },   // long-only
     { 0, 0, 0, 0 }
 };
 
@@ -652,6 +781,21 @@ static void help(const char* pname) {
 "\n"
 "  --flowMaxIdle num  flows idle longer than <num> are deleted (default 300s)\n"
 "\n"
+"  --mode {ts,seq,hybrid}\n"
+"                     RTT measurement path. (default: hybrid)\n"
+"                       ts      — TCP timestamp option only (legacy behavior;\n"
+"                                 flows without TSopt are dropped as no_TS).\n"
+"                       seq     — TCP SEQ/ACK only; works on every TCP flow.\n"
+"                       hybrid  — TS path on TS-capable flows, SEQ path on\n"
+"                                 the rest. Recommended; produces samples on\n"
+"                                 mixed-OS workloads (Windows, stripped TS).\n"
+"                     The no_TS counter only increments in --mode ts (where\n"
+"                     non-TS packets are dropped); in seq/hybrid those packets\n"
+"                     are handled by the SEQ path and not counted.\n"
+"\n"
+"  -e output adds a 12th field (t = TS path, s = SEQ path) per RTT line.\n"
+"  Human-readable output adds a trailing [t] or [s] tag.\n"
+"\n"
 "  -h|--help          print help then exit\n"
 ;
 }
@@ -664,8 +808,9 @@ int main(int argc, char* const* argv)
         help(argv[0]);
         exit(1);
     }
+    int longindex = -1;
     for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqve",
-                                 opts, nullptr)) != -1; ) {
+                                 opts, &longindex)) != -1; ) {
         switch (c) {
         case 'i': liveInp = true; fname = optarg; break;
         case 'r': fname = optarg; break;
@@ -681,6 +826,21 @@ int main(int argc, char* const* argv)
         case 'M': tsvalMaxAge = atof(optarg); break;
         case 'F': flowMaxIdle = atof(optarg); break;
         case 'h': help(argv[0]); exit(0);
+        case 0: {
+            // long-only options dispatched by name
+            const char* name = opts[longindex].name;
+            if (std::strcmp(name, "mode") == 0) {
+                if      (std::strcmp(optarg, "ts")     == 0) mode = Mode::TS;
+                else if (std::strcmp(optarg, "seq")    == 0) mode = Mode::SEQ;
+                else if (std::strcmp(optarg, "hybrid") == 0) mode = Mode::HYBRID;
+                else {
+                    std::cerr << "unknown --mode value: " << optarg
+                              << " (expected ts, seq, or hybrid)\n";
+                    exit(EXIT_FAILURE);
+                }
+            }
+            break;
+        }
         }
     }
     if (optind < argc || fname.empty()) {
@@ -784,6 +944,9 @@ int main(int argc, char* const* argv)
                 not_tcp = 0;
                 not_v4or6 = 0;
                 tsDropped = 0;
+                seqSamples = 0;
+                seqKarnDrops = 0;
+                seqStale = 0;
             }
             nxtSum = capTm + sumInt;
 

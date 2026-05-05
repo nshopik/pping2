@@ -50,13 +50,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. e_field_count — every -e line has exactly 11 fields
+# 2. e_field_count — every -e line has exactly 12 fields
 # ---------------------------------------------------------------------------
-BAD_FIELDS=$(awk 'NF != 11 { print NR": "NF" fields: "$0 }' "$TMP_E")
+BAD_FIELDS=$(awk 'NF != 12 { print NR": "NF" fields: "$0 }' "$TMP_E")
 if [ -z "$BAD_FIELDS" ]; then
     pass "e_field_count"
 else
     fail "e_field_count" "lines with wrong field count: $BAD_FIELDS"
+fi
+
+# ---------------------------------------------------------------------------
+# 2b. e_tag_field — field 12 is 't' (TS path) on every line for known.pcap
+# ---------------------------------------------------------------------------
+BAD_TAG=$(awk '$12 != "t" { print NR": "$12 }' "$TMP_E")
+if [ -z "$BAD_TAG" ]; then
+    pass "e_tag_field"
+else
+    fail "e_tag_field" "lines with wrong tag: $BAD_TAG"
 fi
 
 # ---------------------------------------------------------------------------

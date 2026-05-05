@@ -1,2 +1,10 @@
 pping
 test/unit_tests
+
+# Local agent state — not part of the project
+CLAUDE.md
+.claude/
+
+# Python cache from test/synth/
+__pycache__/
+*.pyc

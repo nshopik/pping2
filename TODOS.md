@@ -15,3 +15,15 @@ Items deferred from the `/cso` security audit. Most are DoS / robustness, not di
 ## Considered and not a finding
 
 - `-f` BPF filter string concatenation (`pping.cpp:525`) — `-f` is from `argv` (trusted) and libpcap's filter compiler validates the result. Not exploitable.
+
+## SEQ/ACK feature follow-ups
+
+Surfaced in the final review of the `seq-ack-rtt` branch. None block merge.
+
+- [ ] **Add IPv6 + SEQ test coverage.** All three pcap fixtures (`dns-tcp-linux.pcap`, `dns-tcp-windows.pcap`, `mixed-with-retx.pcap`) are IPv4. The SEQ-path code is address-family agnostic but no end-to-end golden exercises v6 + SEQ. Add a `dns-tcp6-windows.pcap` fixture and goldens for `--mode seq` and `--mode hybrid`.
+
+- [ ] **`bytesDep` is always 0 in SEQ-emitted samples.** The TS path writes `bytesDep` on the reverse flow when emitting; the SEQ path reads `rr->bytesDep` but never writes it. In `--mode seq` runs `dBytes` is always 0; in `--mode hybrid` on a mixed pcap the field is asymmetric between `t`-tagged and `s`-tagged samples. Either mirror the TS path's bookkeeping in the SEQ match block, or document the asymmetry.
+
+- [ ] **Extend `cross_mode_check.sh` to assert `--mode seq == --mode hybrid` on `dns-tcp-windows.pcap`.** The current script only asserts `--mode ts == --mode hybrid` on a TS-capable pcap. The dual property is implicit from the goldens but not asserted; locking it in is a 5-line addition.
+
+- [ ] **Document the golden regeneration runbook.** The procedure (`make pcaps`, then per-pcap-per-mode `pping -e --mode <m> -r ... | awk '{$11=""; ...}'`) is captured implicitly across `test/test_seq.sh`, `test/synth/`, and `Makefile`. A short comment block at the top of `test_seq.sh` or a `## Regenerating goldens` section in README would help future maintainers.

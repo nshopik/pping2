@@ -226,6 +226,49 @@ static void test_flowkey_v4_v6_disambig()
 }
 REGISTER_TEST(test_flowkey_v4_v6_disambig);
 
+static void test_seq_compare_wrap()
+{
+    // Identity / adjacent
+    ASSERT_EQ(seq_lt(1u, 2u), true);
+    ASSERT_EQ(seq_lt(2u, 1u), false);
+    ASSERT_EQ(seq_lt(5u, 5u), false);
+    ASSERT_EQ(seq_geq(5u, 5u), true);
+    ASSERT_EQ(seq_geq(6u, 5u), true);
+    ASSERT_EQ(seq_geq(4u, 5u), false);
+
+    // Wrap: a just below 2^32, b just above 0. a < b in stream order.
+    const uint32_t near_max = 0xFFFFFFFEu;
+    const uint32_t small    = 0x00000002u;
+    ASSERT_EQ(seq_lt(near_max, small), true);
+    ASSERT_EQ(seq_geq(small, near_max), true);
+
+    // Half-window edge case: a and b are exactly 2^31 apart. RFC 1323 leaves
+    // this undefined. int32_t(a - b) = INT32_MIN: seq_lt(a,b) treats it as
+    // "less than" (INT32_MIN < 0 is true). Symmetrically, seq_geq(b, a)
+    // computes int32_t(b - a) = INT32_MIN >= 0, which is false — so
+    // seq_geq is NOT the boolean negation of seq_lt at this exact boundary.
+    // Both assertions lock the current implementation behavior.
+    const uint32_t a = 0x10000000u;
+    const uint32_t b = a + 0x80000000u; // exactly 2^31 ahead
+    ASSERT_EQ(seq_lt(a, b), true);
+    ASSERT_EQ(seq_geq(b, a), false);
+}
+REGISTER_TEST(test_seq_compare_wrap);
+
+static void test_flowrec_seq_field_defaults()
+{
+    flowRec fr;
+    ASSERT_EQ((int)fr.outstanding_end, 0);
+    ASSERT_EQ(fr.outstanding_time, 0.0);
+    ASSERT_EQ((int)fr.high_seq, 0);
+    ASSERT_EQ(fr.high_seq_init, false);
+    ASSERT_EQ(fr.retx_flag, false);
+    ASSERT_EQ(fr.tsCapable, false);
+    ASSERT_EQ(fr.classified, false);
+    ASSERT_EQ(fr.revFlowRec, (flowRec*)nullptr);
+}
+REGISTER_TEST(test_flowrec_seq_field_defaults);
+
 /* -------------------------------------------------------------------------
  * addTS / cleanUp — migrated to FlowKey/TsKey + tsInfo-by-value.
  * ---------------------------------------------------------------------- */
