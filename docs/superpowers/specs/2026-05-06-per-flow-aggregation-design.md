@@ -26,9 +26,10 @@ per-match printf).
 - Carry only the fields ClickHouse actually consumes: per-flow `min` RTT
   plus identifiers and a sample count for downstream confidence filtering.
 - Strictly cheaper per-packet than today's per-match emit.
-- Bounded memory: per-flow accumulator stays small enough that the
-  existing `maxFlows = 65535` cap continues to bound total accumulator
-  memory under 10 MB.
+- Bounded memory: per-flow accumulator stays small relative to the
+  flowRec it lives in (~16 B added on top of ~80 B). The flow-table
+  cap is also being raised in this change (see Capacity knobs below)
+  so accumulator memory scales with the new `maxFlows` ceiling.
 - Opt-in: today's `-e`, `-m`, and human-readable outputs continue
   bit-for-bit unchanged.
 - Loss-free on graceful exit: in-progress flows flush their rows on
@@ -63,18 +64,42 @@ fatal: -a/--aggregate is mutually exclusive with -e/--extended and -m/--machine
 
 `--flowMaxAge=<seconds>`. Default `1800` (30 minutes — middle ground
 between the typical 1H ClickHouse dashboard granularity and the 15m
-investigation granularity). Range `[0, 43200]`. `0` disables the age
-cap entirely (rely on FIN/RST/idle for emission). Values above 43200
-(12 hours) are rejected at startup:
+investigation granularity). Range `[0, ∞)`. `0` disables the age
+cap entirely (rely on FIN/RST/idle for emission). Negative values are
+rejected at startup. No upper ceiling — operators who want very long
+windows already have `0=disabled` as the bigger footgun, so an
+intermediate ceiling adds no real protection.
 
-```
-fatal: --flowMaxAge=86400 exceeds 12-hour cap (43200s);
-       use a value in [0, 43200] (0=disabled, default=1800)
-```
+### Capacity knobs
 
-The 12-hour ceiling exists to bound how long flow data can sit unflushed
-before reaching ClickHouse — a pping crash or restart loses all
-unflushed accumulator state, so a hard ceiling is a footgun guard.
+The aggregation feature stores per-flow accumulator state, so the
+existing flow-table cap matters more in practice. Two related changes:
+
+- **`maxFlows` default raised to `262144` (256K)** from the prior
+  `65535`. Justification: typical mirrored-port captures on busy hosts
+  (web frontends, internal switches) regularly exceed 65K concurrent
+  flows. Memory at full cap: ~96 B per flowRec × 256K plus
+  unordered_map overhead ≈ ~44 MB. Trivial on any host that runs
+  ClickHouse-adjacent tooling.
+
+- **`--maxFlows=N` CLI knob.** Range `[1024, ∞)`. `0 = unlimited`
+  (relies on host memory and the natural age-out via `flowMaxIdle`
+  to bound growth — same convention as `flowMaxAge=0`). Values below
+  1024 are rejected at startup; otherwise unbounded.
+
+- **`maxTSvals` default raised to `2,000,000,000`.** The prior
+  `4,000,000` was sized for 100–200 K pps; at 1 Mpps and beyond it
+  becomes the constraint. The new value is effectively unlimited —
+  `tsvalMaxAge` (10s default) and host memory become the natural
+  bound. Steady-state at 1 Mpps stays well under 1 GB. No CLI knob;
+  just a default bump.
+
+- **Rejection log rate-limited.** The existing per-rejection
+  `std::cerr` line in `process_packet` (around line 422) is removed.
+  Replaced by a counter `flowsDropped` that increments on each
+  rejection and is printed in `printSummary()` as
+  `<n> flows dropped (cap),` when non-zero. Per-rejection logging at
+  high pps would otherwise fill stderr with thousands of lines/sec.
 
 ### Idle reuse
 
@@ -133,9 +158,11 @@ bool     closed       = false;  // first FIN seen on this dir, or RST seen
                                 // on either dir (peer flag set via revFlowRec)
 ```
 
-Total ~16 bytes after struct padding. At the existing
-`maxFlows = 65535` cap, total accumulator memory adds <1.1 MB on top of
-the current flowRec footprint — well inside the 10 MB budget.
+Total ~16 bytes after struct padding. At the new `maxFlows = 262144`
+default cap, the accumulator portion adds ~4 MB on top of the existing
+flowRec footprint (~96 B per flow × 256K ≈ 24 MB total flowRec memory,
+plus unordered_map node overhead). Well within budget for any host
+that runs ClickHouse-adjacent tooling.
 
 ### Hot-path edits in `process_packet`
 
@@ -259,9 +286,13 @@ re-run on `mixed-with-retx.pcap` with and without `-a` and confirm
 `ns/pkt` does not regress. The acceptance bar is *no regression* under
 default `-r` mode (per-match emit), and *improvement* under `-r -a`.
 
-**Memory:** per-flow accumulator grows by ~16 bytes. At
-`maxFlows = 65535`, total added accumulator memory < 1.1 MB. Total
-flowRec footprint stays well under 10 MB at the cap.
+**Memory:** per-flow accumulator grows by ~16 bytes. At the new
+`maxFlows = 262144` default cap, accumulator memory adds ~4 MB on top
+of the existing flowRec footprint (~96 B × 256K ≈ 24 MB total flowRec
+heap). Operators who set `--maxFlows=0` (unlimited) or a higher
+explicit value will scale memory linearly. Adjacent `maxTSvals` is
+raised to effectively unlimited (`2,000,000,000`); steady-state
+tsTbl memory at 1 Mpps with `tsvalMaxAge=10s` stays under 1 GB.
 
 **Output volume:** for a typical workload with ~20 RTT samples per flow,
 `-a` produces ~5% of the row count of `-e`. Exact ratio depends on
@@ -291,11 +322,17 @@ flow length distribution.
   `last_tm`. Window boundaries are implicit (gap between rows of the
   same 5-tuple). If you ever need explicit window start times, add
   `first_tm` as a 10th field — additive, not breaking.
-- **maxFlows pressure**: unchanged. New flows still rejected when full.
-  Existing aggregating flows continue normally.
+- **maxFlows pressure**: cap raised to 256K default with `--maxFlows`
+  knob (see Capacity knobs). New flows still silently rejected when
+  full; the prior per-rejection stderr line is replaced by a counter
+  reported in the summary line. Existing aggregating flows continue
+  normally regardless of cap pressure.
 - **`flowMaxAge=0`** disables the age cap entirely. Long flows then
   flush only on FIN/RST/idle/shutdown. Memory still bounded by `maxFlows`,
   so safe; the trade-off is data freshness on truly long-lived flows.
+- **`maxFlows=0`** means unlimited — host memory and `flowMaxIdle`
+  natural age-out become the only bounds. Appropriate for hosts with
+  generous memory and traffic profiles that don't churn aggressively.
 
 ## Testing
 
@@ -370,14 +407,25 @@ configurations: default (`-r`), `-r -e`, `-r -a`. Acceptance:
 
 ## Migration
 
-- No flag, no flowRec, no output change for users not passing `-a`.
-- The 9 existing SEQ/ACK golden files (3 fixtures × 3 modes) remain
-  byte-identical.
+- No row-format change for users not passing `-a`. The 9 existing
+  SEQ/ACK golden files (3 fixtures × 3 modes) remain byte-identical.
 - ClickHouse ingest pipeline switches to `pping -a ...` whenever the
   operator decides to. Schema changes required: drop `fBytes`, `dBytes`,
   `pBytes` from the ingest table, add `n_samples`. Both old and new
   pping versions can run side-by-side during rollout.
 - `-e` remains available for diagnostic / live-debug use indefinitely.
+- **Behavior changes that affect *all* users** (regardless of `-a`):
+  - `maxFlows` default rises from 65535 to 262144. Steady-state memory
+    grows proportionally on hosts whose live flow count was previously
+    saturating the old cap. Operators on memory-constrained hosts can
+    pin to the old default with `--maxFlows=65535`.
+  - `maxTSvals` default rises from 4M to 2B (effectively unlimited).
+    Hosts that were hitting `tsTbl drops` will see those go away;
+    memory bounded instead by `tsvalMaxAge` and host RAM.
+  - Per-rejection `flow limit (...) reached, dropping new flow: ...`
+    stderr line is removed in favor of the summary-line counter.
+    Operators relying on the old line for monitoring need to switch
+    to parsing the summary `<n> flows dropped (cap),` field.
 
 ## Open questions
 
