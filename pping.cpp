@@ -230,16 +230,15 @@ static int64_t nextFlush;       // next stdout flush time (~uS)
 
 static inline void addTS(const TsKey& key, const tsInfo& ti)
 {
-    // Drop-new at cap: only allow no-op updates to existing keys (try_emplace
-    // wouldn't insert anyway). Storage is by-value so there's no pointer to
-    // leak on the dup-key path — that's the TODO #2 fix folded into this PR.
-    if (tsTbl.size() >= maxTSvals) {
-        if (tsTbl.find(key) == tsTbl.end()) {
-            ++tsDropped;
-        }
-        return;
+    // Below cap: try_emplace gives first-write-wins for free.
+    // At cap: count a *new* key as dropped; an existing key would be a no-op
+    // anyway so skip the insert. Storage is by-value, so the duplicate-key
+    // path can't leak (TODO #2 fix folded in).
+    if (tsTbl.size() < maxTSvals) {
+        tsTbl.try_emplace(key, ti);
+    } else if (tsTbl.find(key) == tsTbl.end()) {
+        ++tsDropped;
     }
-    tsTbl.try_emplace(key, ti);
 }
 
 // A packet's ECR (timestamp echo reply) should match the TSval of some
@@ -715,6 +714,11 @@ int main(int argc, char* const* argv)
                 }
             } else {
                 snif = new FileSniffer(fname, config);
+                // pcap mode: no local-host concept, so disable the filter
+                // explicitly. Otherwise filtLocal stays true and only the
+                // localIPaf == 0 branch in process_packet keeps the filter
+                // from misfiring — fragile if anyone touches that init.
+                filtLocal = false;
             }
         } catch (std::exception& ex) {
             std::cerr << "Couldn't open " << fname << ": " << ex.what() << "\n";
