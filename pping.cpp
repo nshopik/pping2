@@ -219,6 +219,9 @@ static int flowCnt;
 // entries) and ~3% of a 32GB host's RAM under hostile flood.
 static size_t maxTSvals = 4000000;
 static int tsDropped;
+static int seqSamples;     // production: RTT samples emitted via SEQ path
+static int seqKarnDrops;   // diagnostic: samples discarded by strict Karn
+static int seqStale;       // diagnostic: outstanding measurements aged out
 enum class Mode { TS, SEQ, HYBRID };
 static Mode mode = Mode::HYBRID;
 // Set by SIGINT/SIGTERM handler to break the packet loop cleanly so the
@@ -605,6 +608,9 @@ static void printSummary()
                  printnz(not_tcp, " not TCP, ") +
                  printnz(not_v4or6, " not v4 or v6, ") +
                  printnz(tsDropped, " tsTbl drops, ") +
+                 printnz(seqSamples, " seq samples, ") +
+                 printnz(seqKarnDrops, " seq karn drops, ") +
+                 printnz(seqStale, " seq stale, ") +
                  "\n";
 }
 
@@ -824,6 +830,9 @@ int main(int argc, char* const* argv)
                 not_tcp = 0;
                 not_v4or6 = 0;
                 tsDropped = 0;
+                seqSamples = 0;
+                seqKarnDrops = 0;
+                seqStale = 0;
             }
             nxtSum = capTm + sumInt;
 
