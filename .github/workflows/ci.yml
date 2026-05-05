@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [master]
+
+env:
+  LIBTINS_VERSION: v4.5
+  LIBTINS_PREFIX: ${{ github.workspace }}/.libtins
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake libpcap-dev libssl-dev pkg-config git ca-certificates
+
+      - name: Cache libtins
+        id: cache-libtins
+        uses: actions/cache@v4
+        with:
+          path: .libtins
+          key: libtins-${{ env.LIBTINS_VERSION }}-ubuntu-24.04
+
+      - name: Build libtins (cache miss)
+        if: steps.cache-libtins.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 --branch "$LIBTINS_VERSION" \
+            https://github.com/mfontanini/libtins.git /tmp/libtins-src
+          cmake -S /tmp/libtins-src -B /tmp/libtins-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIBTINS_ENABLE_PCAP=1 \
+            -DCMAKE_INSTALL_PREFIX="$LIBTINS_PREFIX"
+          cmake --build /tmp/libtins-build --parallel "$(nproc)"
+          cmake --install /tmp/libtins-build
+
+      - name: Build pping
+        run: make LIBTINS="$LIBTINS_PREFIX"
+
+      - name: Upload pping binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pping-${{ github.sha }}
+          path: pping
+          retention-days: 7
+
+  test:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install test deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libpcap-dev libssl-dev pkg-config
+
+      - name: Restore libtins cache
+        uses: actions/cache@v4
+        with:
+          path: .libtins
+          key: libtins-${{ env.LIBTINS_VERSION }}-ubuntu-24.04
+
+      - name: Download pping binary
+        uses: actions/download-artifact@v4
+        with:
+          name: pping-${{ github.sha }}
+
+      - name: Make pping executable
+        run: chmod +x pping
+
+      - name: Build unit tests
+        run: make LIBTINS="$LIBTINS_PREFIX" test/unit_tests
+
+      - name: Run test suite
+        working-directory: test
+        env:
+          LD_LIBRARY_PATH: ${{ env.LIBTINS_PREFIX }}/lib
+        run: sh run_tests.sh
