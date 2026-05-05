@@ -208,6 +208,8 @@ static int flowCnt;
 // entries) and ~3% of a 32GB host's RAM under hostile flood.
 static size_t maxTSvals = 4000000;
 static int tsDropped;
+enum class Mode { TS, SEQ, HYBRID };
+static Mode mode = Mode::HYBRID;
 // Set by SIGINT/SIGTERM handler to break the packet loop cleanly so the
 // end-of-run wall-clock summary still prints on Ctrl+C from live capture.
 static volatile sig_atomic_t stopRequested = 0;
@@ -610,6 +612,7 @@ static struct option opts[] = {
     { "tsvalMaxAge", required_argument, nullptr, 'M' },
     { "flowMaxIdle", required_argument, nullptr, 'F' },
     { "help",      no_argument,       nullptr, 'h' },
+    { "mode",      required_argument, nullptr,  0  },   // long-only
     { 0, 0, 0, 0 }
 };
 
@@ -674,8 +677,9 @@ int main(int argc, char* const* argv)
         help(argv[0]);
         exit(1);
     }
+    int longindex = -1;
     for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqve",
-                                 opts, nullptr)) != -1; ) {
+                                 opts, &longindex)) != -1; ) {
         switch (c) {
         case 'i': liveInp = true; fname = optarg; break;
         case 'r': fname = optarg; break;
@@ -691,6 +695,21 @@ int main(int argc, char* const* argv)
         case 'M': tsvalMaxAge = atof(optarg); break;
         case 'F': flowMaxIdle = atof(optarg); break;
         case 'h': help(argv[0]); exit(0);
+        case 0: {
+            // long-only options dispatched by name
+            const char* name = opts[longindex].name;
+            if (std::strcmp(name, "mode") == 0) {
+                if      (std::strcmp(optarg, "ts")     == 0) mode = Mode::TS;
+                else if (std::strcmp(optarg, "seq")    == 0) mode = Mode::SEQ;
+                else if (std::strcmp(optarg, "hybrid") == 0) mode = Mode::HYBRID;
+                else {
+                    std::cerr << "unknown --mode value: " << optarg
+                              << " (expected ts, seq, or hybrid)\n";
+                    exit(EXIT_FAILURE);
+                }
+            }
+            break;
+        }
         }
     }
     if (optind < argc || fname.empty()) {
