@@ -111,12 +111,57 @@ pping -i en0 -c 100 -f 'net 45.57 or 74.125'
 
 `pping -h`, `pping --help`, or just `pping` describes all flags.
 
-Since pping outputs one line per RTT measurement, on a busy interface its
-output should be redirected to a file or piped to a summarization or plotting
-utility. Two parseable formats are designed for that:
+pping outputs one line per RTT measurement. On a busy interface, redirect to
+a file or pipe to a summarization or plotting utility. The exact format is
+selected by `-m` (compact) or `-e` (extended); see below.
 
-- `-m` — compact (timestamp, RTT, srcIP, dstIP)
-- `-e` — extended (adds minRTT, byte counters, ports, capture-node FQDN, path tag)
+## Output formats
+
+Three formats are available. Each prints one line per RTT sample.
+
+### Default — human-readable
+
+```
+time RTT minRTT src:sport+dst:dport [tag]
+```
+
+```
+15:30:42 12.3ms 8.7ms 192.168.1.5:54321+34.107.221.82:443 [t]
+```
+
+`time` is local capture time (`%T`). `RTT` and `minRTT` are formatted with SI
+units (us / ms / s) and adaptive precision. `tag` is `t` (TS path) or `s`
+(SEQ path).
+
+### `-m` — machine-readable, compact
+
+```
+epoch.usec RTT srcIP dstIP
+```
+
+```
+1715876442.123456 0.012300 192.168.1.5 34.107.221.82
+```
+
+`epoch.usec` is Unix time with 6-digit microseconds. `RTT` is in seconds.
+No path tag, no ports, no minRTT. Designed for terse logging.
+
+### `-e` — machine-readable, extended
+
+```
+epoch.usec RTT minRTT fBytes dBytes pBytes srcIP sport dstIP dport node tag
+```
+
+```
+1715876442.123456 0.012300 0.008700 1234567 1200000 1500 192.168.1.5 54321 34.107.221.82 443 host.example.com t
+```
+
+Twelve space-separated fields, no quoting. `RTT` and `minRTT` are in seconds.
+`fBytes` is total bytes through the capture point on this flow direction;
+`dBytes` is bytes departed at the time the matched timestamp was recorded;
+`pBytes` is bytes since the previous RTT sample on this flow. `node` is the
+capture host's FQDN. `tag` is `t` (TS path) or `s` (SEQ path). Designed for
+direct ingestion into ClickHouse or similar.
 
 ## Measurement modes
 
@@ -138,9 +183,9 @@ Select with `--mode {ts,seq,hybrid}` (default: `hybrid`).
 ./pping --mode hybrid -r capture.pcap   # TS where available, SEQ otherwise
 ```
 
-`-e` extended output adds a 12th field — `t` (TS path) or `s` (SEQ path) —
-appended after `node`. Human-readable output gains a trailing `[t]`/`[s]`
-tag. The compact `-m` format is unchanged.
+Which path produced a sample is shown in the output (see Output formats above):
+`[t]` / `[s]` in the default format, the `tag` field in `-e`. The `-m` format
+omits the tag.
 
 The summary line gains three new counters when non-zero:
 `<n> seq samples,` `<n> seq karn drops,` `<n> seq stale,`.
@@ -171,13 +216,6 @@ replay through pping in file mode:
 ```Shell
 sudo tcpdump -i eth0 -s 144 -c 1000000 -w bench.pcap tcp
 ./pping -r bench.pcap > /dev/null
-```
-
-If you need to find where the time goes, profile with perf:
-
-```Shell
-perf record -F 999 -g -- ./pping -r bench.pcap > /dev/null
-perf report
 ```
 
 ## Releases
