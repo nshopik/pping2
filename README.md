@@ -113,8 +113,9 @@ tag. The compact `-m` format is unchanged.
 The summary line gains three new counters when non-zero:
 `<n> seq samples,` `<n> seq karn drops,` `<n> seq stale,`.
 
-In `--mode hybrid` the `no_TS` counter reports flows that were redirected to
-the SEQ path, not flows that were dropped.
+The `no_TS` counter only increments in `--mode ts` (where non-TS packets are
+dropped). In `seq` and `hybrid` modes those packets are handled by the SEQ
+path and are not counted.
 
 ## Benchmarking ##
 
