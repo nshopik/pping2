@@ -64,5 +64,7 @@ test:
   script:
     # Build unit test binary (pping binary comes from build artifact)
     - make LIBTINS="$LIBTINS_PREFIX" test/unit_tests
-    # Run the full test suite (integration + format + unit tests)
-    - cd test && sh run_tests.sh
+    # Run the full test suite (integration + format + unit tests).
+    # libtins is built fresh into $LIBTINS_PREFIX/lib and isn't on the
+    # default search path, so point ld.so at it for runtime resolution.
+    - cd test && LD_LIBRARY_PATH="$LIBTINS_PREFIX/lib" sh run_tests.sh

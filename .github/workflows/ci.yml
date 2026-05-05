@@ -82,4 +82,6 @@ jobs:
 
       - name: Run test suite
         working-directory: test
+        env:
+          LD_LIBRARY_PATH: ${{ env.LIBTINS_PREFIX }}/lib
         run: sh run_tests.sh
