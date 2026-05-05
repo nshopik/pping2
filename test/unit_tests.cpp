@@ -265,6 +265,7 @@ static void test_flowrec_seq_field_defaults()
     ASSERT_EQ(fr.retx_flag, false);
     ASSERT_EQ(fr.tsCapable, false);
     ASSERT_EQ(fr.classified, false);
+    ASSERT_EQ(fr.revFlowRec, (flowRec*)nullptr);
 }
 REGISTER_TEST(test_flowrec_seq_field_defaults);
 

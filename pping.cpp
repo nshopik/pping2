@@ -171,6 +171,11 @@ class flowRec
                         // match on TSval entry by reverse flow, i.e. the number of bytes
                         // departed through CP the last time an RTT was computed for this stream
     bool revFlow{};             //inidcates if a reverse flow has been seen
+    // Peer flowRec* — set when both directions are first observed, nulled on
+    // peer expiry. Lets the SEQ ACK fast-path skip the per-packet flows.find(rk).
+    // revFlow stays sticky-true for the TS-path early-return logic; revFlowRec
+    // is lifecycle-managed because it must never dangle.
+    flowRec* revFlowRec{nullptr};
 
     // SEQ-path state (used in --mode seq and --mode hybrid for non-TS flows)
     uint32_t outstanding_end{0};   // expected ack; 0 = no measurement in flight
@@ -370,16 +375,6 @@ static void process_packet(const Packet& pkt)
         return;
     }
 
-    // Probe for TCP timestamp option; do not early-return on absence.
-    const auto* tsopt = t_tcp->search_option(TCP::TSOPT);
-    const bool  tsopt_present = (tsopt && tsopt->data_size() >= 8);
-    uint32_t rcv_tsval = 0, rcv_tsecr = 0;
-    if (tsopt_present) {
-        uint32_t be;
-        std::memcpy(&be, tsopt->data_ptr(),     4); rcv_tsval = ntohl(be);
-        std::memcpy(&be, tsopt->data_ptr() + 4, 4); rcv_tsecr = ntohl(be);
-    }
-
     // FlowKey + IP/IPv6 selection (unchanged)
     FlowKey fk;
     const IP* ip;
@@ -404,22 +399,19 @@ static void process_packet(const Packet& pkt)
     fk.dport = t_tcp->dport();
 
     // capture clock time (unchanged)
-    std::time_t result = pkt.timestamp().seconds();
     if (offTm < 0) {
         offTm = static_cast<int64_t>(pkt.timestamp().seconds());
         startm = double(pkt.timestamp().microseconds()) * 1e-6;
         capTm = startm;
         if (sumInt) {
+            std::time_t first = pkt.timestamp().seconds();
             std::cerr << "First packet at "
-                      << std::asctime(std::localtime(&result)) << "\n";
+                      << std::asctime(std::localtime(&first)) << "\n";
         }
     } else {
         int64_t tt = static_cast<int64_t>(pkt.timestamp().seconds()) - offTm;
         capTm = double(tt) + double(pkt.timestamp().microseconds()) * 1e-6;
     }
-    (void)result; // human-format time is reformatted inside emit()
-
-    const FlowKey rk = fk.reversed();
 
     auto fres = flows.try_emplace(fk, nullptr);
     auto fit = fres.first;
@@ -435,15 +427,34 @@ static void process_packet(const Packet& pkt)
         fr = new flowRec();
         fit->second = fr;
         flowCnt++;
+        // Reverse-flow lookup runs only on first-packet-of-flow, not per-packet.
+        const FlowKey rk = fk.reversed();
         auto rit = flows.find(rk);
         if (rit != flows.end()) {
             rit->second->revFlow = true;
+            rit->second->revFlowRec = fr;
             fr->revFlow = true;
+            fr->revFlowRec = rit->second;
         }
     } else {
         fr = fit->second;
     }
     fr->last_tm = capTm;
+
+    // Defer TSOPT parse until after flow classification: only first-packet
+    // (to set tsCapable) or subsequent packets of TS-capable flows need it.
+    // Non-TS flows in --mode seq/hybrid skip the option search entirely.
+    bool tsopt_present = false;
+    uint32_t rcv_tsval = 0, rcv_tsecr = 0;
+    if (!fr->classified || fr->tsCapable) {
+        const auto* tsopt = t_tcp->search_option(TCP::TSOPT);
+        tsopt_present = (tsopt && tsopt->data_size() >= 8);
+        if (tsopt_present) {
+            uint32_t be;
+            std::memcpy(&be, tsopt->data_ptr(),     4); rcv_tsval = ntohl(be);
+            std::memcpy(&be, tsopt->data_ptr() + 4, 4); rcv_tsecr = ntohl(be);
+        }
+    }
 
     // Classify the flow on its first packet (set once, never changes).
     if (!fr->classified) {
@@ -487,7 +498,7 @@ static void process_packet(const Packet& pkt)
             addTS(tk, tsInfo{capTm, arr_fwd, fr->bytesDep});
         }
         TsKey lookup;
-        lookup.flow = rk;
+        lookup.flow = fk.reversed();
         lookup.tsval = rcv_tsecr;
         auto eit = tsTbl.find(lookup);
         if (eit != tsTbl.end() && eit->second.t > 0.0) {
@@ -498,8 +509,15 @@ static void process_packet(const Packet& pkt)
             double dBytes = eit->second.dBytes;
             double pBytes = arr_fwd - fr->lstBytesSnt;
             fr->lstBytesSnt = arr_fwd;
-            auto rit = flows.find(rk);
-            if (rit != flows.end()) rit->second->bytesDep = fBytes;
+            // Use the cached reverse-flow pointer; null when peer expired
+            // (equivalent to the prior flows.find(rk) miss). Note: if the peer
+            // expires and is later re-created with the same FlowKey, the cached
+            // pointer stays null until *this* flow itself is re-inserted (the
+            // linkage at line ~434 only fires on the inserted branch). The
+            // original flows.find(rk) would have re-discovered the recycled
+            // peer and written bytesDep to a fresh-but-unrelated flowRec; the
+            // new behavior is strictly more conservative.
+            if (fr->revFlowRec) fr->revFlowRec->bytesDep = fBytes;
             emit(rtt, fr, fk, fBytes, dBytes, pBytes, /*tag=*/'t');
             eit->second.t = -t;
         }
@@ -543,29 +561,28 @@ static void process_packet(const Packet& pkt)
         // the in-flight measurement on the forward (reverse-of-this-packet) flow.
         if (flags & TCP::ACK) {
             const uint32_t ack = t_tcp->ack_seq();
-            auto rit = flows.find(rk);
-            if (rit != flows.end()) {
-                flowRec* rr = rit->second;
-                if (rr->outstanding_end != 0 && seq_geq(ack, rr->outstanding_end)) {
-                    const double rtt        = capTm - rr->outstanding_time;
-                    const bool   karn_clean = !rr->retx_flag;
-                    rr->outstanding_end = 0;
-                    rr->retx_flag       = false;
-                    if (karn_clean) {
-                        if (rr->min > rtt) rr->min = rtt;
-                        ++seqSamples;
+            // Cached reverse-flow pointer; replaces a per-ACK flows.find(rk).
+            // Null when the peer has expired (cleanUp unlinks before delete).
+            flowRec* rr = fr->revFlowRec;
+            if (rr && rr->outstanding_end != 0 && seq_geq(ack, rr->outstanding_end)) {
+                const double rtt        = capTm - rr->outstanding_time;
+                const bool   karn_clean = !rr->retx_flag;
+                rr->outstanding_end = 0;
+                rr->retx_flag       = false;
+                if (karn_clean) {
+                    if (rr->min > rtt) rr->min = rtt;
+                    ++seqSamples;
 
-                        // The RTT belongs to the forward (rr) flow; emit using
-                        // its key. The fk in this scope is the reverse direction.
-                        FlowKey ffk = fk.reversed();
-                        const double fBytes = rr->bytesSnt;
-                        const double dBytes = rr->bytesDep;
-                        const double pBytes = rr->bytesSnt - rr->lstBytesSnt;
-                        rr->lstBytesSnt = rr->bytesSnt;
-                        emit(rtt, rr, ffk, fBytes, dBytes, pBytes, /*tag=*/'s');
-                    } else {
-                        ++seqKarnDrops;
-                    }
+                    // The RTT belongs to the forward (rr) flow; emit using
+                    // its key. The fk in this scope is the reverse direction.
+                    FlowKey ffk = fk.reversed();
+                    const double fBytes = rr->bytesSnt;
+                    const double dBytes = rr->bytesDep;
+                    const double pBytes = rr->bytesSnt - rr->lstBytesSnt;
+                    rr->lstBytesSnt = rr->bytesSnt;
+                    emit(rtt, rr, ffk, fBytes, dBytes, pBytes, /*tag=*/'s');
+                } else {
+                    ++seqKarnDrops;
                 }
             }
         }
@@ -586,6 +603,8 @@ static void cleanUp(double n)
     for (auto it = flows.begin(); it != flows.end();) {
         flowRec* fr = it->second;
         if (n - fr->last_tm > flowMaxIdle) {
+            // Unlink peer's cached pointer before delete to avoid dangling.
+            if (fr->revFlowRec) fr->revFlowRec->revFlowRec = nullptr;
             delete it->second;
             it = flows.erase(it);
             flowCnt--;
