@@ -358,43 +358,28 @@ static void emit(double rtt, flowRec* fr, const FlowKey& fk,
 static void process_packet(const Packet& pkt)
 {
     pktCnt++;
-    // all packets should be TCP since that's in config
     const TCP* t_tcp;
     if ((t_tcp = pkt.pdu()->find_pdu<TCP>()) == nullptr) {
         not_tcp++;
         return;
     }
-    // Decode the TCP timestamp option without exceptions. The previous
-    // t_tcp->timestamp() call threw option_not_found on every packet
-    // missing the option — on workloads with mostly non-TS traffic the
-    // exception unwinder (_Unwind_Find_FDE) and the malloc/free of the
-    // exception object dominated CPU. search_option returns a pointer
-    // (or nullptr) and never throws.
+
+    // Probe for TCP timestamp option; do not early-return on absence.
     const auto* tsopt = t_tcp->search_option(TCP::TSOPT);
-    if (!tsopt || tsopt->data_size() < 8) {
-        no_TS++;
-        return;
-    }
-    uint32_t rcv_tsval, rcv_tsecr;
-    {
-        // The TS option payload is 8 bytes: 4B TSval + 4B TSecr, both in
-        // network byte order. memcpy is alignment-safe and gets folded into
-        // a single load by the optimizer on x86; portable to ARM strict-align.
+    const bool  tsopt_present = (tsopt && tsopt->data_size() >= 8);
+    uint32_t rcv_tsval = 0, rcv_tsecr = 0;
+    if (tsopt_present) {
         uint32_t be;
         std::memcpy(&be, tsopt->data_ptr(),     4); rcv_tsval = ntohl(be);
         std::memcpy(&be, tsopt->data_ptr() + 4, 4); rcv_tsecr = ntohl(be);
     }
-    if (rcv_tsval == 0 || (rcv_tsecr == 0 && (t_tcp->flags() != TCP::SYN))) {
-        return;
-    }
 
-    // Build FlowKey directly from packet bytes — no string allocation on
-    // the hot path. Default member initializers zero the pad bytes.
+    // FlowKey + IP/IPv6 selection (unchanged)
     FlowKey fk;
     const IP* ip;
     const IPv6* ipv6;
     if ((ip = pkt.pdu()->find_pdu<IP>()) != nullptr) {
-        uint32_t s = ip->src_addr();   // libtins IPv4Address → uint32_t (net order)
+        uint32_t s = ip->src_addr();
         uint32_t d = ip->dst_addr();
         std::memcpy(fk.srcIP.data(), &s, 4);
         std::memcpy(fk.dstIP.data(), &d, 4);
@@ -412,11 +397,10 @@ static void process_packet(const Packet& pkt)
     fk.sport = t_tcp->sport();
     fk.dport = t_tcp->dport();
 
-    // process capture clock time
+    // capture clock time (unchanged)
     std::time_t result = pkt.timestamp().seconds();
     if (offTm < 0) {
         offTm = static_cast<int64_t>(pkt.timestamp().seconds());
-        // fractional part of first usable packet time
         startm = double(pkt.timestamp().microseconds()) * 1e-6;
         capTm = startm;
         if (sumInt) {
@@ -424,14 +408,13 @@ static void process_packet(const Packet& pkt)
                       << std::asctime(std::localtime(&result)) << "\n";
         }
     } else {
-        // offset capture time
         int64_t tt = static_cast<int64_t>(pkt.timestamp().seconds()) - offTm;
         capTm = double(tt) + double(pkt.timestamp().microseconds()) * 1e-6;
     }
+    (void)result; // human-format time is reformatted inside emit()
 
     const FlowKey rk = fk.reversed();
 
-    // Single try_emplace per packet for the forward flow lookup.
     auto fres = flows.try_emplace(fk, nullptr);
     auto fit = fres.first;
     bool inserted = fres.second;
@@ -446,8 +429,6 @@ static void process_packet(const Packet& pkt)
         fr = new flowRec();
         fit->second = fr;
         flowCnt++;
-        // only want to record tsvals when capturing both directions of a flow.
-        // if this flow is the reverse of a known flow, mark both bi-directional.
         auto rit = flows.find(rk);
         if (rit != flows.end()) {
             rit->second->revFlow = true;
@@ -458,57 +439,70 @@ static void process_packet(const Packet& pkt)
     }
     fr->last_tm = capTm;
 
+    // Classify the flow on its first packet (set once, never changes).
     if (!fr->classified) {
-        fr->tsCapable = (tsopt != nullptr);
+        fr->tsCapable = tsopt_present;
         fr->classified = true;
     }
 
-    if (! fr->revFlow) {
+    if (!fr->revFlow) {
         uniDir++;
         return;
     }
-
     double arr_fwd = fr->bytesSnt + pkt.pdu()->size();
     fr->bytesSnt = arr_fwd;
 
-    // filtLocal: skip storing TSval for packets going to the local host.
-    // localIPBytes/af were parsed from localIP once at startup.
+    // Mode dispatch.
+    const bool useSeq =
+        (mode == Mode::SEQ) ||
+        (mode == Mode::HYBRID && !fr->tsCapable);
+    const bool useTs =
+        (mode == Mode::TS && fr->tsCapable) ||
+        (mode == Mode::HYBRID && fr->tsCapable);
+
+    if (mode == Mode::TS && !fr->tsCapable) {
+        // Today's behavior in --mode ts: count and drop.
+        no_TS++;
+        return;
+    }
+
     bool toLocal = filtLocal && localIPaf == fk.af
                 && std::memcmp(localIPBytes.data(), fk.dstIP.data(), 16) == 0;
-    if (!toLocal) {
-        TsKey tk;
-        tk.flow = fk;
-        tk.tsval = rcv_tsval;
-        addTS(tk, tsInfo{capTm, arr_fwd, fr->bytesDep});
+
+    if (useTs) {
+        // Existing TS path: preserves the rcv_tsval / rcv_tsecr sanity checks.
+        if (rcv_tsval == 0 || (rcv_tsecr == 0 && (t_tcp->flags() != TCP::SYN))) {
+            return;
+        }
+        if (!toLocal) {
+            TsKey tk;
+            tk.flow = fk;
+            tk.tsval = rcv_tsval;
+            addTS(tk, tsInfo{capTm, arr_fwd, fr->bytesDep});
+        }
+        TsKey lookup;
+        lookup.flow = rk;
+        lookup.tsval = rcv_tsecr;
+        auto eit = tsTbl.find(lookup);
+        if (eit != tsTbl.end() && eit->second.t > 0.0) {
+            double t = eit->second.t;
+            double rtt = capTm - t;
+            if (fr->min > rtt) fr->min = rtt;
+            double fBytes = eit->second.fBytes;
+            double dBytes = eit->second.dBytes;
+            double pBytes = arr_fwd - fr->lstBytesSnt;
+            fr->lstBytesSnt = arr_fwd;
+            auto rit = flows.find(rk);
+            if (rit != flows.end()) rit->second->bytesDep = fBytes;
+            emit(rtt, fr, fk, fBytes, dBytes, pBytes, /*tag=*/'t');
+            eit->second.t = -t;
+        }
     }
 
-    TsKey lookup;
-    lookup.flow = rk;
-    lookup.tsval = rcv_tsecr;
-    auto eit = tsTbl.find(lookup);
-    if (eit != tsTbl.end() && eit->second.t > 0.0) {
-        // this packet is the return "pping" -- process it for packet's src
-        double t = eit->second.t;
-        double rtt = capTm - t;
-        if (fr->min > rtt) {
-            fr->min = rtt;       //track minimum
-        }
-        double fBytes = eit->second.fBytes;
-        double dBytes = eit->second.dBytes;
-        double pBytes = arr_fwd - fr->lstBytesSnt;
-        fr->lstBytesSnt = arr_fwd;
-        // Update reverse flow's bytesDep — necessary lookup since the reverse
-        // flow's iterator wasn't cached above.
-        auto rit = flows.find(rk);
-        if (rit != flows.end()) {
-            rit->second->bytesDep = fBytes;
-        }
-
-        emit(rtt, fr, fk, fBytes, dBytes, pBytes, /*tag=*/'t');
-
-        eit->second.t = -t;     //leaves an entry in the TS table to avoid saving
-                                // this TSval again; negative marks it consumed
-    }
+    // SEQ path: filled in by Tasks 11 and 12.
+    (void)useSeq;
+    (void)t_tcp;
+    (void)toLocal;
 }
 
 static void cleanUp(double n)
