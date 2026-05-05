@@ -539,7 +539,36 @@ static void process_packet(const Packet& pkt)
             }
         }
 
-        // Reverse-match step is added in Task 12.
+        // Reverse direction: ACK that crosses the outstanding boundary closes
+        // the in-flight measurement on the forward (reverse-of-this-packet) flow.
+        if (flags & TCP::ACK) {
+            const uint32_t ack = t_tcp->ack_seq();
+            auto rit = flows.find(rk);
+            if (rit != flows.end()) {
+                flowRec* rr = rit->second;
+                if (rr->outstanding_end != 0 && seq_geq(ack, rr->outstanding_end)) {
+                    const double rtt        = capTm - rr->outstanding_time;
+                    const bool   karn_clean = !rr->retx_flag;
+                    rr->outstanding_end = 0;
+                    rr->retx_flag       = false;
+                    if (karn_clean) {
+                        if (rr->min > rtt) rr->min = rtt;
+                        ++seqSamples;
+
+                        // The RTT belongs to the forward (rr) flow; emit using
+                        // its key. The fk in this scope is the reverse direction.
+                        FlowKey ffk = fk.reversed();
+                        const double fBytes = rr->bytesSnt;
+                        const double dBytes = rr->bytesDep;
+                        const double pBytes = rr->bytesSnt - rr->lstBytesSnt;
+                        rr->lstBytesSnt = rr->bytesSnt;
+                        emit(rtt, rr, ffk, fBytes, dBytes, pBytes, /*tag=*/'s');
+                    } else {
+                        ++seqKarnDrops;
+                    }
+                }
+            }
+        }
     }
 }
 
