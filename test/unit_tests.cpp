@@ -226,6 +226,43 @@ static void test_flowkey_v4_v6_disambig()
 }
 REGISTER_TEST(test_flowkey_v4_v6_disambig);
 
+static void test_ipToStr_v4()
+{
+    auto fmt = [](uint8_t a, uint8_t b, uint8_t c, uint8_t d) -> std::string {
+        std::array<uint8_t, 16> bytes{};
+        bytes[0] = a; bytes[1] = b; bytes[2] = c; bytes[3] = d;
+        IpStr s = ipToStr(bytes, 4);
+        return std::string(s.buf.data());
+    };
+
+    ASSERT_STR_EQ(fmt(0,   0,   0,   0),   "0.0.0.0");
+    ASSERT_STR_EQ(fmt(255, 255, 255, 255), "255.255.255.255");
+    ASSERT_STR_EQ(fmt(192, 168, 1,   1),   "192.168.1.1");
+    ASSERT_STR_EQ(fmt(10,  0,   0,   1),   "10.0.0.1");
+    ASSERT_STR_EQ(fmt(8,   8,   8,   8),   "8.8.8.8");
+}
+REGISTER_TEST(test_ipToStr_v4);
+
+static void test_ipToStr_v6()
+{
+    auto fmt = [](std::array<uint8_t, 16> bytes) -> std::string {
+        IpStr s = ipToStr(bytes, 6);
+        return std::string(s.buf.data());
+    };
+
+    // ::
+    ASSERT_STR_EQ(fmt({{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}}), "::");
+    // ::1
+    ASSERT_STR_EQ(fmt({{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1}}), "::1");
+    // ::ffff:1.2.3.4 — IPv4-mapped IPv6; inet_ntop renders the v4 dotted suffix
+    ASSERT_STR_EQ(fmt({{0,0,0,0,0,0,0,0,0,0,0xff,0xff,1,2,3,4}}), "::ffff:1.2.3.4");
+    // 2001:db8:: (full first hextet, rest zero)
+    ASSERT_STR_EQ(fmt({{0x20,0x01,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,0}}), "2001:db8::");
+    // fe80::1
+    ASSERT_STR_EQ(fmt({{0xfe,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,1}}), "fe80::1");
+}
+REGISTER_TEST(test_ipToStr_v6);
+
 static void test_seq_compare_wrap()
 {
     // Identity / adjacent
@@ -492,6 +529,59 @@ static void test_emit_aggregated_seq_tag()
         "5.000000 0.012000 3 10.0.0.1 1 10.0.0.2 2 h s\n");
 }
 REGISTER_TEST(test_emit_aggregated_seq_tag);
+
+static void test_emit_human_format()
+{
+    // Pin TZ so the %T value is deterministic across CI hosts.
+    setenv("TZ", "UTC", 1);
+    tzset();
+
+    flowRec fr;
+    fr.last_tm = 0;
+    fr.min     = 0.012;     // 12.0ms
+
+    FlowKey fk = makeFlow4(192, 168, 1, 1, 10, 0, 0, 1, 1234, 80);
+
+    // Save / set globals
+    int64_t saved_off       = offTm;
+    bool    saved_machine   = machineReadable;
+    bool    saved_extended  = extendedMachineOutput;
+    double  saved_capTm     = capTm;
+    machineReadable = false;
+    extendedMachineOutput = false;
+    // Unix time 1700000000 = 2023-11-14 22:13:20 UTC.
+    // emit() reads capTm + offTm to form the wall-clock second.
+    offTm = 1700000000;
+    capTm = 0.0;
+
+    // Three calls: first two share an integer second (cache populate + cache hit),
+    // third advances capTm by 1.0 to force a cache invalidation.  A bug that
+    // short-circuited the cache (always reusing tbuff) would still pass the
+    // first two lines but fail the third with "22:13:20" instead of "22:13:21".
+    std::string out = capture_stdout([&]() {
+        capTm = 0.0;
+        emit(0.025, &fr, fk, 0, 0, 0, 't');
+        emit(0.030, &fr, fk, 0, 0, 0, 's');
+        capTm = 1.0;
+        emit(0.040, &fr, fk, 0, 0, 0, 't');
+    });
+
+    // Restore globals
+    offTm = saved_off;
+    machineReadable = saved_machine;
+    extendedMachineOutput = saved_extended;
+    capTm = saved_capTm;
+
+    // Expected exact bytes — exercises both the printf format and the %T value.
+    // Format from emit() human branch: "%s %s %s %s:%u+%s:%u [%c]\n"
+    // fmtTimeDiff(0.025) = "25.0ms", fmtTimeDiff(0.030) = "30.0ms",
+    // fmtTimeDiff(0.040) = "40.0ms", fmtTimeDiff(0.012) = "12.0ms".
+    ASSERT_STR_EQ(out,
+        "22:13:20 25.0ms 12.0ms 192.168.1.1:1234+10.0.0.1:80 [t]\n"
+        "22:13:20 30.0ms 12.0ms 192.168.1.1:1234+10.0.0.1:80 [s]\n"
+        "22:13:21 40.0ms 12.0ms 192.168.1.1:1234+10.0.0.1:80 [t]\n");
+}
+REGISTER_TEST(test_emit_human_format);
 
 static void test_cleanUp_closed_emits_and_deletes()
 {

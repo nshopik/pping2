@@ -62,6 +62,7 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -209,23 +210,34 @@ struct tsInfo {
 static std::unordered_map<FlowKey, flowRec*, ByteHash> flows;
 static std::unordered_map<TsKey, tsInfo, ByteHash> tsTbl;
 
-// Format a 16-byte IP slot (per af) as a printable string. Called only on the
-// rare/print paths — never on the hot per-packet path.
-static inline std::string ipToString(const std::array<uint8_t, 16>& bytes, uint8_t af)
+// Allocation-free IP-to-string formatter.  Wraps inet_ntop() with a
+// stack buffer sized for the longest IPv6 textual form.  Replaces
+// ipToString (which goes through libtins IPv{4,6}Address::to_string,
+// which uses std::ostringstream internally — visible in profiles as
+// _M_insert<unsigned long> and ~basic_ostringstream).
+//
+// `bytes` holds the address in network byte order: the first 4 bytes
+// for AF_INET, all 16 for AF_INET6 — matching the existing FlowKey
+// invariant.  `af` is 4 or 6, as elsewhere in pping.
+struct IpStr {
+    std::array<char, INET6_ADDRSTRLEN> buf;   // 46 bytes; always NUL-terminated
+};
+
+static inline IpStr ipToStr(const std::array<uint8_t, 16>& bytes, uint8_t af) noexcept
 {
-    if (af == 4) {
-        uint32_t ip_n;
-        std::memcpy(&ip_n, bytes.data(), 4);
-        return IPv4Address(ip_n).to_string();
-    }
-    return IPv6Address(bytes.data()).to_string();
+    IpStr s{};
+    inet_ntop(af == 4 ? AF_INET : AF_INET6,
+              bytes.data(), s.buf.data(), s.buf.size());
+    return s;
 }
 
 // Human-readable "src:port+dst:port". Errors + human output only.
 static inline std::string flowKeyName(const FlowKey& k)
 {
-    return ipToString(k.srcIP, k.af) + ":" + std::to_string(k.sport)
-         + "+" + ipToString(k.dstIP, k.af) + ":" + std::to_string(k.dport);
+    IpStr s = ipToStr(k.srcIP, k.af);
+    IpStr d = ipToStr(k.dstIP, k.af);
+    return std::string(s.buf.data()) + ":" + std::to_string(k.sport)
+         + "+" + std::string(d.buf.data()) + ":" + std::to_string(k.dport);
 }
 
 #define SNAP_LEN 144                // maximum bytes per packet to capture
@@ -356,30 +368,40 @@ static int64_t clock_now(void) {
 static void emit(double rtt, flowRec* fr, const FlowKey& fk,
                  double fBytes, double dBytes, double pBytes, char tag)
 {
-    std::string ipsstr = ipToString(fk.srcIP, fk.af);
-    std::string ipdstr = ipToString(fk.dstIP, fk.af);
+    IpStr ipsstr = ipToStr(fk.srcIP, fk.af);
+    IpStr ipdstr = ipToStr(fk.dstIP, fk.af);
 
     if (extendedMachineOutput) {
         printf("%" PRId64 ".%06d %.6f %.6f %.0f %.0f %.0f %s %u %s %u %s %c\n",
                 int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
                 rtt, fr->min, fBytes, dBytes, pBytes,
-                ipsstr.c_str(), fk.sport,
-                ipdstr.c_str(), fk.dport,
+                ipsstr.buf.data(), fk.sport,
+                ipdstr.buf.data(), fk.dport,
                 node.c_str(),
                 tag);
     } else if (machineReadable) {
         printf("%" PRId64 ".%06d %.6f %s %s\n",
                 int64_t(capTm + offTm), int((capTm - floor(capTm)) * 1e6),
-                rtt, ipsstr.c_str(), ipdstr.c_str());
+                rtt, ipsstr.buf.data(), ipdstr.buf.data());
     } else {
         std::time_t result = static_cast<std::time_t>(int64_t(capTm + offTm));
-        char tbuff[80];
-        struct tm* ptm = std::localtime(&result);
-        strftime(tbuff, 80, "%T", ptm);
+        // Cache the formatted %T string per integer second.  Otherwise
+        // std::localtime() triggers glibc's __tzset_internal which stat()s
+        // /etc/localtime on every call (15.22% kernel + 10.58% libc-side
+        // in the hot-path profile).  Same wall-clock second → reuse buffer.
+        // Single-threaded; if pping ever threads, make these thread-local.
+        static std::time_t cachedSec = 0;
+        static char tbuff[16];
+        if (result != cachedSec) {
+            cachedSec = result;
+            struct tm tmBuf;
+            localtime_r(&result, &tmBuf);
+            strftime(tbuff, sizeof tbuff, "%T", &tmBuf);
+        }
         printf("%s %s %s %s:%u+%s:%u [%c]\n",
                tbuff, fmtTimeDiff(rtt).c_str(),
                fmtTimeDiff(fr->min).c_str(),
-               ipsstr.c_str(), fk.sport, ipdstr.c_str(), fk.dport,
+               ipsstr.buf.data(), fk.sport, ipdstr.buf.data(), fk.dport,
                tag);
     }
     int64_t now = clock_now();
@@ -396,14 +418,14 @@ static void emit(double rtt, flowRec* fr, const FlowKey& fk,
 // Format: "epoch.usec min_rtt n_samples srcIP sport dstIP dport node tag\n"
 static void emit_aggregated(const flowRec* fr, const FlowKey& fk)
 {
-    std::string ipsstr = ipToString(fk.srcIP, fk.af);
-    std::string ipdstr = ipToString(fk.dstIP, fk.af);
+    IpStr ipsstr = ipToStr(fk.srcIP, fk.af);
+    IpStr ipdstr = ipToStr(fk.dstIP, fk.af);
     printf("%" PRId64 ".%06d %.6f %u %s %u %s %u %s %c\n",
            int64_t(fr->last_tm + offTm),
            int((fr->last_tm - floor(fr->last_tm)) * 1e6),
            fr->min, fr->n_samples,
-           ipsstr.c_str(), fk.sport,
-           ipdstr.c_str(), fk.dport,
+           ipsstr.buf.data(), fk.sport,
+           ipdstr.buf.data(), fk.dport,
            node.c_str(),
            fr->tsCapable ? 't' : 's');
     int64_t now = clock_now();
