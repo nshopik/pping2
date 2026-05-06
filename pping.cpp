@@ -507,6 +507,20 @@ static void process_packet(const Packet& pkt)
         uniDir++;
         return;
     }
+    // Close-flag detection. FIN is unidirectional in TCP — A's FIN closes A→B
+    // but B may still send. RST kills both directions; propagate to the peer
+    // flowRec via the cached pointer (null-checked since the peer may have
+    // been idle-evicted earlier).
+    {
+        const auto cflags = t_tcp->flags();
+        if (cflags & TCP::FIN) {
+            fr->closed = true;
+        }
+        if (cflags & TCP::RST) {
+            fr->closed = true;
+            if (fr->revFlowRec) fr->revFlowRec->closed = true;
+        }
+    }
     double arr_fwd = fr->bytesSnt + pkt.pdu()->size();
     fr->bytesSnt = arr_fwd;
 
