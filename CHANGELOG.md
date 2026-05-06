@@ -49,6 +49,34 @@
 - **Default RTT measurement now uses hybrid TS+SEQ path** (`--mode hybrid`).
   Flows previously dropped as `no_TS` (Windows, stripped-TS middleboxes) now
   produce SEQ-path samples. To restore prior behavior pass `--mode ts`.
+- Default `PPING_LOGFILE` moved from `/var/log/pping.log` to
+  `/var/log/pping/pping.log`. The systemd install target now creates the
+  parent directory owned by `nobody` (the user pping drops to after opening
+  the packet socket). Without this, the post-rotation `open(O_CREAT)` on
+  SIGHUP fails with EACCES under `/var/log/`'s root-only ownership and pping
+  silently keeps writing to the renamed `.load` inode.
+
+### Fixed
+
+- **Loader rotation now actually works under privilege drop.** Pre-fix,
+  `pping-load.sh` would `mv pping.log → pping.log.load` and `systemctl
+  reload pping`, but pping (running as `nobody` after `dropPrivileges`)
+  could not create a fresh `pping.log` in the root-owned `/var/log/`
+  directory; it kept writing to the renamed `.load` inode and the loader's
+  next-minute `[ -s "$LOGFILE" ]` check silently exited. Net effect: a
+  single growing `pping.log.load`, no new `pping.log`, no rows reaching
+  ClickHouse, and no error visible to the operator. Fixed by relocating
+  the logfile to `/var/log/pping/` (see Changed entry above) so the
+  reopen succeeds.
+- **Loader diagnostic output now reaches syslog/journal.** `pping-load.sh`
+  routes its own messages through `logger -s -t pping-load -p daemon.<level>`
+  and pipes the ingest tool's stderr through the same logger. Before, a
+  misconfigured `CH_ARGS` (wrong host, bad password, etc.) produced output
+  only on the script's stderr — which on systems without an MTA
+  configured for cron silently went nowhere, so a sysadmin running with a
+  bad ClickHouse address saw no errors anywhere. The script also now logs
+  a `daemon.warning` once per minute when a stale `.load` file blocks
+  ingest, instead of exiting silently.
 
 ### Added (mode/SEQ work)
 

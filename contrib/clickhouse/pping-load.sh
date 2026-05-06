@@ -11,6 +11,16 @@
 # See /etc/default/pping for configuration.
 set -euo pipefail
 
+# All diagnostic output goes through `logger -s` so it lands in
+# syslog/journal AND on stderr (the latter reaches cron mail when an MTA
+# is configured). Without this, a misconfigured CH host or a stuck
+# .load file produces no visible signal on systems with no MTA — the
+# common "everything looks fine but no data is loading" failure mode.
+log() {
+    local level=$1; shift
+    logger -s -t pping-load -p "daemon.$level" -- "$*"
+}
+
 [ -r /etc/default/pping ] && . /etc/default/pping
 
 # tr ' ' '\t' below assumes pping's space-separated output has no spaces
@@ -18,17 +28,25 @@ set -euo pipefail
 # RFC-bound FQDNs, single-char tags). If pping ever gains a field that
 # can contain spaces, this loader needs an awk/perl reformatter.
 
-LOGFILE="${PPING_LOGFILE:-/var/log/pping.log}"
+LOGFILE="${PPING_LOGFILE:-/var/log/pping/pping.log}"
 LOADFILE="${LOGFILE}.load"
 TABLE="${PPING_TABLE:-pping_flows}"
 INGEST="${PPING_INGEST:-clickhouse-client}"
 
-[ -s "$LOGFILE" ]    || exit 0    # nothing new to load (file missing or empty)
-[ ! -f "$LOADFILE" ] || exit 0    # previous load still in progress / failed; keep accumulating
+# Previous load failed: don't rotate again, just skip. Warn loudly so a
+# stuck .load (e.g. CH unreachable, bad CH_ARGS) is visible in syslog/journal
+# instead of accumulating silently. Checked before LOGFILE so even a quiet
+# pping (no new rows) still surfaces the stuck file once a minute.
+if [ -f "$LOADFILE" ]; then
+    log warning "$LOADFILE present from previous run; skipping ingest until it is resolved"
+    exit 0
+fi
+
+[ -s "$LOGFILE" ] || exit 0    # nothing new to load (file missing or empty); silent — normal case
 
 mv "$LOGFILE" "$LOADFILE"
 if ! systemctl reload pping.service; then
-    echo "$(date -Iseconds) pping-load: systemctl reload pping failed; pping is still writing to $LOADFILE — aborting load to preserve data" >&2
+    log err "systemctl reload pping failed; pping is still writing to $LOADFILE — aborting load to preserve data"
     exit 1
 fi
 
@@ -52,14 +70,18 @@ case "$INGEST" in
     clickhouse-client) ingest_fn=ingest_via_clickhouse_client ;;
     curl)              ingest_fn=ingest_via_curl ;;
     *)
-        echo "$(date -Iseconds) pping-load: unknown PPING_INGEST='$INGEST' (expected 'clickhouse-client' or 'curl')" >&2
+        log err "unknown PPING_INGEST='$INGEST' (expected 'clickhouse-client' or 'curl')"
         exit 1
         ;;
 esac
 
-if "$ingest_fn"; then
+# Route the ingest tool's stderr through logger so its diagnostic
+# (e.g. "Code: 209. DB::NetException: Connection refused" from
+# clickhouse-client, or curl's resolve/SSL errors) reaches syslog/journal.
+# Process substitution requires bash, which the shebang already mandates.
+if "$ingest_fn" 2> >(logger -s -t pping-load -p daemon.err); then
     rm "$LOADFILE"
 else
-    echo "$(date -Iseconds) pping-load: $INGEST ingest failed; preserving $LOADFILE for next run" >&2
+    log err "$INGEST ingest failed; preserving $LOADFILE for next run"
     exit 1
 fi

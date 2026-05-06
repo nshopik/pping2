@@ -72,7 +72,26 @@ install-systemd:
 	    install -m 0644 contrib/systemd/pping.default \
 	        $(DESTDIR)$(SYSCONFDIR)/default/pping; \
 	fi
-	if [ -z "$(DESTDIR)" ]; then systemctl daemon-reload; fi
+	# pping drops to `nobody` after opening the packet socket, so it
+	# needs a directory it can recreate the logfile in on SIGHUP. /var/log
+	# itself is root-owned, so without this the post-rotation reopen
+	# fails (EACCES) and pping silently keeps writing to the renamed
+	# .load inode — see CHANGELOG entry "logfile rotation under
+	# privilege drop".
+	install -d $(DESTDIR)/var/log/pping
+	# `id -gn nobody` pins the group to whatever `nobody`'s primary group
+	# is on this host (`nogroup` on Debian/Ubuntu, `nobody` on RHEL). Without
+	# it, the dir ends up `nobody:root`, which functionally works but looks
+	# like a half-finished install to a reader.
+	if [ -z "$(DESTDIR)" ]; then \
+	    chown nobody:`id -gn nobody` /var/log/pping; \
+	    systemctl daemon-reload; \
+	else \
+	    echo ""; \
+	    echo "WARNING: chown skipped because DESTDIR is set."; \
+	    echo "Apply in your packaging postinst (or run manually):"; \
+	    echo '  chown nobody:$$(id -gn nobody) /var/log/pping'; \
+	fi
 	@echo
 	@echo "Edit $(SYSCONFDIR)/default/pping (set PPING_IFACE), then:"
 	@echo "  sudo systemctl enable --now pping"
@@ -110,7 +129,8 @@ uninstall:
 uninstall-systemd:
 	rm -f $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping.service
 	if [ -z "$(DESTDIR)" ]; then systemctl daemon-reload; fi
-	# /etc/default/pping is intentionally left in place
+	# /etc/default/pping and /var/log/pping/ are intentionally left in place
+	# (config file and accumulated log data, respectively).
 
 uninstall-clickhouse:
 	rm -f $(DESTDIR)$(PREFIX)/bin/pping-load.sh
