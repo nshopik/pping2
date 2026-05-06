@@ -1,8 +1,9 @@
 # /etc/default/pping — configuration for pping.service and pping-load.sh.
 # Edit this file then run: sudo systemctl restart pping
 
-# Network interface(s) to monitor. Single name (eth0) or space-separated
-# list (eth0 eth1) — the supervisor spawns one pping per interface.
+# Network interface to monitor (required). Single interface only — multi-
+# interface support will land alongside per-row interface attribution in a
+# future release.
 PPING_IFACE=eth0
 
 # pping flags, space-separated. -a enables aggregate mode (one row per flow

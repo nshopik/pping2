@@ -6,7 +6,7 @@ Wants=network-online.target
 
 [Service]
 EnvironmentFile=/etc/default/pping
-ExecStart=/usr/local/bin/pping-supervise.sh
+ExecStart=/usr/local/bin/pping --logfile=${PPING_LOGFILE} ${PPING_FLAGS} -i ${PPING_IFACE}
 ExecReload=/bin/kill -HUP $MAINPID
 StandardOutput=journal
 StandardError=journal

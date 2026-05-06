@@ -62,10 +62,6 @@ ifeq ($(shell uname -s),Linux)
 endif
 
 install-systemd:
-	install -d $(DESTDIR)$(PREFIX)/bin
-	$(SUBST) contrib/systemd/pping-supervise.sh \
-	    > $(DESTDIR)$(PREFIX)/bin/pping-supervise.sh
-	chmod 0755 $(DESTDIR)$(PREFIX)/bin/pping-supervise.sh
 	install -d $(DESTDIR)$(SYSCONFDIR)/systemd/system
 	$(SUBST) contrib/systemd/pping.service \
 	    > $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping.service
@@ -112,7 +108,6 @@ uninstall:
 
 uninstall-systemd:
 	rm -f $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping.service
-	rm -f $(DESTDIR)$(PREFIX)/bin/pping-supervise.sh
 	if [ -z "$(DESTDIR)" ]; then systemctl daemon-reload; fi
 	# /etc/default/pping is intentionally left in place
 

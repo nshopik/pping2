@@ -24,7 +24,6 @@ That's the entire setup. Within a minute the cron loader picks up
 | Path | Source | Purpose |
 | --- | --- | --- |
 | `/usr/local/bin/pping` | binary | the daemon |
-| `/usr/local/bin/pping-supervise.sh` | `contrib/systemd/` | wrapper that fans one pping process per interface in `$PPING_IFACE` |
 | `/etc/systemd/system/pping.service` | `contrib/systemd/` | systemd unit; `ExecReload` sends SIGHUP for log rotation |
 | `/etc/default/pping` | `contrib/systemd/pping.default` | the **only** file you edit; sourced by both daemon and loader |
 | `/usr/local/bin/pping-load.sh` | `contrib/clickhouse/` | cron-driven batch loader |
@@ -39,17 +38,17 @@ edited config) and `/var/log/pping.log` (your data).
 Three settings you must touch, two you might:
 
 ```sh
-PPING_IFACE=eth0                       # required; space-separated for multi-iface
+PPING_IFACE=eth0                       # required; single interface only
 PPING_FLAGS=-a                         # default: aggregate mode (recommended)
 PPING_LOGFILE=/var/log/pping.log       # default; rotation pivots on this path
 PPING_TABLE=pping_flows                # default; only change if you renamed
 CH_ARGS="--host ch.internal --user pping --password=hunter2 --database metrics"
 ```
 
-**Multi-interface:** set `PPING_IFACE="eth0 eth1"`. The supervisor spawns one
-pping per interface; output flows into a single `$PPING_LOGFILE`. Each pping
-opens that file with `--logfile` (O_APPEND), so writes interleave atomically
-per line on Linux for sub-PIPE_BUF rows.
+**Multi-interface:** not supported in v1. Each unit instance monitors a
+single interface; running multiple capture points on one host means
+multiple unit instances (manual today). Proper multi-interface support
+will land alongside a per-row `interface` column in a future release.
 
 **`CH_ARGS`** is passed unquoted to `clickhouse-client`, so multi-flag values
 like the example above just work. Values must not contain internal spaces;

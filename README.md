@@ -91,7 +91,7 @@ The Makefile ships three install targets and an umbrella:
 
 ```Shell
 sudo make install              # binary + setcap cap_net_raw+ep on Linux
-sudo make install-systemd      # +pping.service, /etc/default/pping, supervisor wrapper
+sudo make install-systemd      # +pping.service, /etc/default/pping
 sudo make install-clickhouse   # +cron loader, +schema.sql for the pping_flows table
 sudo make install-all          # all three (Linux only)
 ```
@@ -101,7 +101,7 @@ for distro packagers; `setcap` is skipped (with a warning) when `DESTDIR` is
 set so packaging postinst scripts can apply it. Installed scripts have their
 paths rewritten at install time, so `make install-all PREFIX=/usr` produces
 a coherent install (no hardcoded `/usr/local` references in the cron, unit,
-supervisor, or loader).
+loader).
 
 For the worked end-to-end example (pping → cron loader → ClickHouse), see
 [`clickhouse.md`](clickhouse.md).

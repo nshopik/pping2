@@ -18,10 +18,10 @@
   by external tools (`mv old new; kill -HUP $pid`). Without `--logfile`,
   behavior is unchanged.
 - Bundled systemd unit (`contrib/systemd/pping.service`) with
-  `ExecReload=/bin/kill -HUP $MAINPID`, supervisor wrapper
-  (`pping-supervise.sh`) that fans `PPING_IFACE` (space-separated) into
-  one pping per interface, and shared environment file
-  (`/etc/default/pping`).
+  `ExecReload=/bin/kill -HUP $MAINPID` for log rotation, and shared
+  environment file (`/etc/default/pping`). Single-interface in v1;
+  multi-interface and per-row interface attribution will land together
+  in a future release.
 - Bundled ClickHouse loader (`contrib/clickhouse/`) — batch-load script,
   cron entry, and `pping_flows` table schema matching `-a` output.
   Loader rotates via atomic `mv` + `systemctl reload pping.service`.
