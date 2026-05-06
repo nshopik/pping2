@@ -5,8 +5,11 @@
 # list (eth0 eth1) — the supervisor spawns one pping per interface.
 PPING_IFACE=eth0
 
-# pping flags. -a enables aggregate mode (one row per flow window),
-# recommended for ClickHouse ingest. See `pping --help`.
+# pping flags, space-separated. -a enables aggregate mode (one row per flow
+# window), recommended for ClickHouse ingest. Example with windowing:
+#   PPING_FLAGS="-a --flowMaxAge=900"
+# Flag values must not contain internal spaces (the supervisor word-splits
+# this variable). See `pping --help` for the full flag list.
 PPING_FLAGS=-a
 
 # --- ClickHouse loader settings (used by /usr/local/bin/pping-load.sh) ---

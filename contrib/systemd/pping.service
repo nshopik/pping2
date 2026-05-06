@@ -1,7 +1,8 @@
 [Unit]
 Description=pping passive RTT monitor
 Documentation=https://github.com/nshopik/pping
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 EnvironmentFile=/etc/default/pping
