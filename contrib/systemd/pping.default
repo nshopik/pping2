@@ -1,0 +1,20 @@
+# /etc/default/pping — configuration for pping.service and pping-load.sh.
+# Edit this file then run: sudo systemctl restart pping
+
+# Network interface(s) to monitor. Single name (eth0) or space-separated
+# list (eth0 eth1) — the supervisor spawns one pping per interface.
+PPING_IFACE=eth0
+
+# pping flags. -a enables aggregate mode (one row per flow window),
+# recommended for ClickHouse ingest. See `pping --help`.
+PPING_FLAGS=-a
+
+# --- ClickHouse loader settings (used by /usr/local/bin/pping-load.sh) ---
+
+# Destination table.
+PPING_TABLE=pping_flows
+
+# clickhouse-client arguments (host, database, credentials).
+# Example:
+#   CH_ARGS="--host clickhouse.internal --database metrics --user pping --password=hunter2"
+CH_ARGS=

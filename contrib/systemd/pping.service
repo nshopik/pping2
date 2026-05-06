@@ -1,0 +1,15 @@
+[Unit]
+Description=pping passive RTT monitor
+Documentation=https://github.com/nshopik/pping
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/default/pping
+ExecStart=/usr/local/bin/pping-supervise.sh
+StandardOutput=append:/var/log/pping.log
+StandardError=journal
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
