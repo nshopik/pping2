@@ -17,7 +17,7 @@ sudo systemctl enable --now pping
 ```
 
 That's the entire setup. Within a minute the cron loader picks up
-`/var/log/pping.log` and inserts into the `pping_flows` table.
+`/var/log/pping/pping.log` and inserts into the `pping_flows` table.
 
 ## What got installed
 
@@ -29,9 +29,10 @@ That's the entire setup. Within a minute the cron loader picks up
 | `/usr/local/bin/pping-load.sh` | `contrib/clickhouse/` | cron-driven batch loader |
 | `/etc/cron.d/pping-load` | `contrib/clickhouse/` | runs the loader every minute |
 | `/usr/local/share/pping/schema.sql` | `contrib/clickhouse/` | reference schema (apply manually) |
+| `/var/log/pping/` | `make install-systemd` | log dir, owned by `nobody` so the daemon can recreate the file on SIGHUP |
 
 `make uninstall-all` removes everything except `/etc/default/pping` (your
-edited config) and `/var/log/pping.log` (your data).
+edited config) and `/var/log/pping/pping.log` (your data).
 
 ## Configuring `/etc/default/pping`
 
@@ -40,7 +41,7 @@ Three settings you must touch, two you might:
 ```sh
 PPING_IFACE=eth0                       # required; single interface only
 PPING_FLAGS=-a                         # default: aggregate mode (recommended)
-PPING_LOGFILE=/var/log/pping.log       # default; rotation pivots on this path
+PPING_LOGFILE=/var/log/pping/pping.log # default; dir must be writable by `nobody`
 PPING_TABLE=pping_flows                # default; only change if you renamed
 PPING_INGEST=clickhouse-client         # or 'curl' — see below
 
@@ -53,10 +54,7 @@ CH_ARGS="--host ch.internal --user pping --password=hunter2 --database metrics"
 # CH_DATABASE=metrics
 ```
 
-**Multi-interface:** not supported in v1. Each unit instance monitors a
-single interface; running multiple capture points on one host means
-multiple unit instances (manual today). Proper multi-interface support
-will land alongside a per-row `interface` column in a future release.
+**Multi-interface:** not supported. Tracked in `TODOS.md`.
 
 **`CH_ARGS`** is passed unquoted to `clickhouse-client`, so multi-flag values
 like the example above just work. Values must not contain internal spaces;
@@ -84,25 +82,12 @@ re-reads the env file every minute).
 
 ## How rotation works
 
-The loader runs every minute via cron. Each cycle:
-
-1. `mv /var/log/pping.log /var/log/pping.log.load` — atomic at the dirent
-   level, zero-copy. pping's open fd still points at the renamed inode.
-2. `systemctl reload pping.service` — sends SIGHUP to pping. It reopens
-   `--logfile` at its original path, creating a fresh `/var/log/pping.log`
-   (new inode) for new rows.
-3. `tr ' ' '\t' < /var/log/pping.log.load | clickhouse-client INSERT...`
-   — old rows go into ClickHouse.
-4. On success, `rm /var/log/pping.log.load`. On failure, the `.load` file
-   stays on disk and the next minute's run skips (preserving the data) until
-   the next ingest succeeds.
-
-This is fast even on busy hosts — no file copying, no truncation race. pping
-checks the SIGHUP-set reopen flag inside its packet loop; with libtins's
-default pcap timeout (250ms; set at `pping.cpp` `set_timeout(250)`) the
-loop wakes at least four times a second even on quiet interfaces, so the
-worst-case delay between mv and reopen is ~250ms. Any rows pping writes in
-that window land in the `.load` file and are ingested normally.
+`pping-load.sh` rotates by `mv` — atomic at the dirent level, so pping's
+open fd stays valid on the renamed inode and no rows are lost. `systemctl
+reload` then sends SIGHUP; pping reopens its `--logfile` path on the next
+packet-loop tick, capped at libtins's 250ms pcap timeout. On ingest failure
+the `.load` file persists; the next minute's run sees it at the top and
+exits, preserving data until ClickHouse is reachable again.
 
 ## Tuning the load
 
