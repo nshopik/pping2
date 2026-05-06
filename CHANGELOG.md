@@ -13,6 +13,27 @@
   flow's accumulator can run before emitting a row and resetting.
 - Two new summary-line counters: `aggregated rows,` and
   `flows dropped (cap),`.
+- `--logfile=PATH` flag in pping: open the path with append+create as
+  stdout, and reopen on SIGHUP. Enables zero-copy atomic log rotation
+  by external tools (`mv old new; kill -HUP $pid`). Without `--logfile`,
+  behavior is unchanged.
+- Bundled systemd unit (`contrib/systemd/pping.service`) with
+  `ExecReload=/bin/kill -HUP $MAINPID`, supervisor wrapper
+  (`pping-supervise.sh`) that fans `PPING_IFACE` (space-separated) into
+  one pping per interface, and shared environment file
+  (`/etc/default/pping`).
+- Bundled ClickHouse loader (`contrib/clickhouse/`) — batch-load script,
+  cron entry, and `pping_flows` table schema matching `-a` output.
+  Loader rotates via atomic `mv` + `systemctl reload pping.service`.
+- Makefile `install`, `install-systemd`, `install-clickhouse`,
+  `install-all` targets and matching `uninstall*` targets. `DESTDIR` and
+  `PREFIX` honored for distro packagers; `setcap` is skipped with a
+  warning when `DESTDIR` is set. Install-time `sed` substitutes
+  `PREFIX`/`SYSCONFDIR` into shipped scripts and unit files so non-default
+  installs (e.g. `PREFIX=/usr`) produce a coherent layout.
+- Quickstart-shaped `clickhouse.md` documenting install → edit env file →
+  apply schema → enable service end-to-end. `deploy.md` removed (its
+  content folded in).
 
 ### Changed
 
