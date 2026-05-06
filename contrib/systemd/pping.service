@@ -1,0 +1,22 @@
+[Unit]
+Description=pping passive RTT monitor
+Documentation=https://github.com/nshopik/pping
+After=network-online.target
+Wants=network-online.target
+# Stop after 5 failed restarts in 60s — surfaces misconfiguration (e.g.
+# PPING_IFACE not set) instead of crashlooping forever.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+EnvironmentFile=/etc/default/pping
+ExecStart=/usr/local/bin/pping --logfile=${PPING_LOGFILE} ${PPING_FLAGS} -i ${PPING_IFACE}
+ExecReload=/bin/kill -HUP $MAINPID
+StandardOutput=journal
+StandardError=journal
+Restart=always
+RestartSec=5
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target

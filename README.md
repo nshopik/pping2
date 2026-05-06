@@ -33,6 +33,10 @@ For an XDP/eBPF-based ISP-scale variant, see [thebracket/cpumap-pping](https://g
 - **Higher default capacity** — `maxFlows` raised from 65535 to 1,048,576;
   `maxTSvals` raised from 4M to 256M. The per-rejection stderr line is
   replaced by a counter in the periodic summary line.
+- **`--logfile=PATH` flag** with SIGHUP-driven reopen — pping opens the
+  path append+create at startup and reopens on SIGHUP. Enables zero-copy
+  atomic log rotation by external tools (`mv` + `kill -HUP $pid`), used
+  by the bundled cron loader to ingest into ClickHouse.
 - **Privilege drop + compile hardening** — opens the packet socket as root,
   then drops to `nobody` before parsing untrusted bytes.
   `-fstack-protector-strong`, `-D_FORTIFY_SOURCE=2`, full RELRO, NX stack.
@@ -85,8 +89,30 @@ as described above. If that isn't the case, override on the command line:
 make LIBTINS=/usr/local
 ```
 
-There's no `install` target — pping for live traffic needs packet sniffing
-capabilities and there's no portable way to set that up. Two options:
+## Installing
+
+The Makefile ships three install targets and an umbrella:
+
+```Shell
+sudo make install              # binary + setcap cap_net_raw+ep on Linux
+sudo make install-systemd      # +pping.service, /etc/default/pping
+sudo make install-clickhouse   # +cron loader, +schema.sql for the pping_flows table
+sudo make install-all          # all three (Linux only)
+```
+
+Each has a matching `uninstall*` target. `DESTDIR` and `PREFIX` are honored
+for distro packagers; `setcap` is skipped (with a warning) when `DESTDIR` is
+set so packaging postinst scripts can apply it. Installed scripts have their
+paths rewritten at install time, so `make install-all PREFIX=/usr` produces
+a coherent install (no hardcoded `/usr/local` references in the cron, unit,
+loader).
+
+For the worked end-to-end example (pping → cron loader → ClickHouse), see
+[`clickhouse.md`](clickhouse.md).
+
+### Running without installing
+
+If you'd rather not install, two ad-hoc options work:
 
 ```Shell
 sudo ./pping -i eth0                          # run as root
@@ -125,67 +151,57 @@ selected by `-m` (compact) or `-e` (extended); see below.
 
 ## Output formats
 
-Three formats are available. Each prints one line per RTT sample.
+Four formats are available. Each prints one line per RTT measurement (or
+per flow window in aggregate mode).
+
+### Field reference
+
+| Field | Meaning |
+| --- | --- |
+| `epoch.usec` | Unix capture time, microsecond precision. |
+| `time` | Local capture time (`%T`). |
+| `RTT` | Round-trip time. Seconds (machine formats); SI-formatted with adaptive precision (default). |
+| `minRTT` / `min_rtt` | Minimum RTT observed for this flow. (`min_rtt` in `-a` output.) |
+| `n_samples` | Count of RTT matches in this aggregate window. |
+| `fBytes` | Total bytes through the capture point on this flow direction. |
+| `dBytes` | Bytes departed when this RTT's timestamp was recorded. |
+| `pBytes` | Bytes since the previous RTT sample on this flow. |
+| `srcIP`/`sport` | TCP source. |
+| `dstIP`/`dport` | TCP destination. |
+| `node` | Capture host's FQDN. |
+| `tag` | `t` (TCP-timestamp path) or `s` (SEQ/ACK path). |
 
 ### Default — human-readable
 
 ```
 time RTT minRTT src:sport+dst:dport [tag]
-```
-
-```
 15:30:42 12.3ms 8.7ms 192.168.1.5:54321+34.107.221.82:443 [t]
 ```
-
-`time` is local capture time (`%T`). `RTT` and `minRTT` are formatted with SI
-units (us / ms / s) and adaptive precision. `tag` is `t` (TS path) or `s`
-(SEQ path).
 
 ### `-m` — machine-readable, compact
 
 ```
 epoch.usec RTT srcIP dstIP
-```
-
-```
 1715876442.123456 0.012300 192.168.1.5 34.107.221.82
 ```
-
-`epoch.usec` is Unix time with 6-digit microseconds. `RTT` is in seconds.
-No path tag, no ports, no minRTT. Designed for terse logging.
 
 ### `-e` — machine-readable, extended
 
 ```
 epoch.usec RTT minRTT fBytes dBytes pBytes srcIP sport dstIP dport node tag
-```
-
-```
 1715876442.123456 0.012300 0.008700 1234567 1200000 1500 192.168.1.5 54321 34.107.221.82 443 host.example.com t
 ```
-
-Twelve space-separated fields, no quoting. `RTT` and `minRTT` are in seconds.
-`fBytes` is total bytes through the capture point on this flow direction;
-`dBytes` is bytes departed at the time the matched timestamp was recorded;
-`pBytes` is bytes since the previous RTT sample on this flow. `node` is the
-capture host's FQDN. `tag` is `t` (TS path) or `s` (SEQ path). Designed for
-direct ingestion into ClickHouse or similar.
 
 ### `-a` — aggregated, one row per flow
 
 ```
 epoch.usec min_rtt n_samples srcIP sport dstIP dport node tag
-```
-
-```
 1715876442.123456 0.008700 247 192.168.1.5 54321 34.107.221.82 443 host.example.com t
 ```
 
-Nine space-separated fields, no quoting. One row per flow per closure-or-window event instead of one row per RTT match. Designed for direct ingestion into ClickHouse where downstream aggregation only consumes per-flow `min` RTT.
-
-`epoch.usec` is the flow's `last_tm` (last packet time). `min_rtt` is the minimum RTT observed in this row's window. `n_samples` is the count of RTT matches contributing to `min_rtt`; useful for downstream confidence filtering. `tag` is `t` (TS path) or `s` (SEQ path), constant per flow.
-
-Triggers: FIN (this direction's flow), RST (both directions), idle expiry via `--flowMaxIdle`, age-cap via `--flowMaxAge`, and shutdown flush. Mutually exclusive with `-e` and `-m`.
+Triggers: FIN (this direction's flow), RST (both directions), idle expiry
+(`--flowMaxIdle`), age-cap (`--flowMaxAge`), shutdown flush. Mutually
+exclusive with `-e` and `-m`.
 
 ```Shell
 ./pping -a -r capture.pcap                     # aggregated; default age-cap = 1800s

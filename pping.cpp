@@ -64,6 +64,7 @@
 #include <sys/socket.h>
 #include <ifaddrs.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <pwd.h>
 #include <grp.h>
 #ifdef __linux__
@@ -254,6 +255,12 @@ static Mode mode = Mode::HYBRID;
 // Set by SIGINT/SIGTERM handler to break the packet loop cleanly so the
 // end-of-run wall-clock summary still prints on Ctrl+C from live capture.
 static volatile sig_atomic_t stopRequested = 0;
+// Set by SIGHUP handler (if --logfile is in use) so the packet loop can
+// reopen the log file in place after an external rotation. Async-signal-safe:
+// the handler only writes the flag; the actual reopen happens on the main
+// thread between packets.
+static volatile sig_atomic_t reopenRequested = 0;
+static std::string logfilePath;   // empty when --logfile not used
 static double time_to_run;      // how many seconds to capture (0=no limit)
 static int maxPackets;          // max packets to capture (0=no limit)
 static int64_t offTm = -1;      // first packet capture time (used to
@@ -765,6 +772,31 @@ static std::string localAddrOf(const std::string ifname)
 
 static void handleSignal(int) { stopRequested = 1; }
 
+// Async-signal-safe: only writes the volatile flag. Do NOT call
+// reopenLogfile() from here — it uses fflush/open/dup2/close which
+// are not async-signal-safe per signal-safety(7). The flag is
+// consumed on the main thread inside the packet loop.
+static void handleSighup(int) { reopenRequested = 1; }
+
+// Reopen the --logfile path: open a fresh fd, dup2 onto stdout, close the
+// extra fd. Used at startup (before the packet loop) and from the main loop
+// when reopenRequested is set by SIGHUP. On reopen failure we keep the
+// existing stdout — never silently lose output.
+static bool reopenLogfile(const char* path)
+{
+    fflush(stdout);
+    int fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (fd < 0) return false;
+    int rc = dup2(fd, STDOUT_FILENO);
+    int saved_errno = errno;
+    close(fd);
+    if (rc < 0) {
+        errno = saved_errno;
+        return false;
+    }
+    return true;
+}
+
 // Drop root after the packet socket / pcap file is open. The packet loop
 // then parses untrusted bytes (network or pcap) through libtins as an
 // unprivileged user, so a parse-time memory bug cannot pivot to root.
@@ -834,6 +866,7 @@ static struct option opts[] = {
     { "help",      no_argument,       nullptr, 'h' },
     { "mode",      required_argument, nullptr,  0  },   // long-only
     { "flowMaxAge", required_argument, nullptr, 0 },    // long-only
+    { "logfile",   required_argument, nullptr, 0 },     // long-only
     { 0, 0, 0, 0 }
 };
 
@@ -895,6 +928,13 @@ static void help(const char* pname) {
 "  --tsvalMaxAge num  max age of an unmatched tsval (default 10s)\n"
 "\n"
 "  --flowMaxIdle num  flows idle longer than <num> are deleted (default 300s)\n"
+"\n"
+"  --logfile path     reopen stdout to <path> at startup (append+create).\n"
+"                     Send SIGHUP to reopen the same path again, which lets\n"
+"                     external tools rotate the log atomically: mv old new;\n"
+"                     kill -HUP <pid>; process new. Without this flag pping\n"
+"                     writes to whichever stdout it inherits (terminal,\n"
+"                     redirect, or systemd's StandardOutput=).\n"
 "\n"
 "  --flowMaxAge num   in -a mode, emit a row and reset the per-flow accumulator\n"
 "                     after the flow has been alive for <num> seconds (default\n"
@@ -967,6 +1007,8 @@ int main(int argc, char* const* argv)
                     exit(EXIT_FAILURE);
                 }
                 flowMaxAge = v;
+            } else if (std::strcmp(name, "logfile") == 0) {
+                logfilePath = optarg;
             }
             break;
         }
@@ -986,6 +1028,14 @@ int main(int argc, char* const* argv)
     // user explicitly asked for summaries via -q/-v/--sumInt.
     if (!liveInp && !sumExplicit) {
         sumInt = 0.;
+    }
+
+    if (!logfilePath.empty()) {
+        if (!reopenLogfile(logfilePath.c_str())) {
+            std::cerr << "fatal: cannot open --logfile=" << logfilePath
+                      << ": " << strerror(errno) << "\n";
+            exit(EXIT_FAILURE);
+        }
     }
 
     BaseSniffer* snif;
@@ -1052,6 +1102,14 @@ int main(int argc, char* const* argv)
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
+    // Only intercept SIGHUP when --logfile is in use; otherwise leave the
+    // default (terminate) so pping behaves like a normal CLI tool.
+    if (!logfilePath.empty()) {
+        struct sigaction sahup{};
+        sahup.sa_handler = handleSighup;
+        sigemptyset(&sahup.sa_mask);
+        sigaction(SIGHUP, &sahup, nullptr);
+    }
     // Ignore SIGPIPE so a closed downstream pipe (e.g. `pping ... | head`)
     // doesn't kill us before the wall-clock summary prints. Writes to the
     // closed fd will return EPIPE, which iostream/printf swallow silently.
@@ -1059,6 +1117,14 @@ int main(int argc, char* const* argv)
 
     for (const auto& packet : *snif) {
         if (stopRequested) break;
+        if (reopenRequested) {
+            reopenRequested = 0;
+            if (!logfilePath.empty() && !reopenLogfile(logfilePath.c_str())) {
+                std::cerr << "pping: failed to reopen --logfile="
+                          << logfilePath << ": " << strerror(errno)
+                          << "; continuing with existing fd\n";
+            }
+        }
         process_packet(packet);
         ++totalPkts;
 
