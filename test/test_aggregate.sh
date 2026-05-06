@@ -45,6 +45,39 @@ for pcap in dns-tcp-linux dns-tcp-windows mixed-with-retx; do
     fi
 done
 
+# --- Synth fixtures ---
+
+# 7. age_cap.pcap with --flowMaxAge=5: long flow emits >=2 rows.
+ROWS=$("$PPING" -a --flowMaxAge=5 -r "$PCAPS_DIR/age_cap.pcap" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$ROWS" -ge 2 ]; then
+    pass "age_cap_emits_multiple_rows"
+else
+    fail "age_cap_emits_multiple_rows" "expected >=2 rows; got $ROWS"
+fi
+
+# 8. idle.pcap with --tsvalMaxAge=1 --flowMaxIdle=2: silent flow A emits
+#    its row using last_tm (~1e9 + 0.05), not capTm at the cleanUp tick.
+#    Strip node col, sort, take only Flow A's source IP rows.
+A_ROWS=$("$PPING" -a --tsvalMaxAge=1 --flowMaxIdle=2 \
+            -r "$PCAPS_DIR/idle.pcap" 2>/dev/null \
+         | awk '$4 == "10.0.0.10"')
+A_COUNT=$(echo "$A_ROWS" | grep -c '^.')
+A_TS=$(echo "$A_ROWS" | head -1 | awk '{print $1}')
+if [ "$A_COUNT" -ge 1 ] && echo "$A_TS" | grep -qE '^1000000000\.0[45]'; then
+    pass "idle_uses_last_tm_not_cleanup_tick"
+else
+    fail "idle_uses_last_tm_not_cleanup_tick" \
+         "A_COUNT=$A_COUNT first_ts=$A_TS (expected 1000000000.04xxxx or .05xxxx)"
+fi
+
+# 9. no_synack.pcap: -a should produce zero output rows.
+NS_ROWS=$("$PPING" -a -r "$PCAPS_DIR/no_synack.pcap" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$NS_ROWS" -eq 0 ]; then
+    pass "no_synack_silent_delete"
+else
+    fail "no_synack_silent_delete" "expected 0 rows; got $NS_ROWS"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo ""
 echo "test_aggregate: $PASS/$TOTAL checks passed"
