@@ -184,6 +184,16 @@ class flowRec
     bool     high_seq_init{false}; // sentinel-safe across full uint32 range
     bool     retx_flag{false};     // strict Karn: invalidate sample if set
 
+    // Aggregator state (used in --aggregate mode for per-flow rows).
+    uint32_t n_samples    = 0;        // RTT matches counted in current window;
+                                      // resets on age-cap fire.
+    double   window_start = 0.;       // capTm at flow creation (or last age-cap reset).
+                                      // 0.0 means "not yet seen a packet" — process_packet
+                                      // sets it on the inserted branch.
+    bool     closed       = false;    // first FIN observed on this direction's flowRec,
+                                      // or RST observed on either direction (peer's flag
+                                      // is set via revFlowRec from the RST-receiving side).
+
     // Set once on first packet through process_packet, then never modified.
     bool     tsCapable{false};
     bool     classified{false};

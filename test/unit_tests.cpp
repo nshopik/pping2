@@ -266,6 +266,10 @@ static void test_flowrec_seq_field_defaults()
     ASSERT_EQ(fr.tsCapable, false);
     ASSERT_EQ(fr.classified, false);
     ASSERT_EQ(fr.revFlowRec, (flowRec*)nullptr);
+    // Aggregator additions:
+    ASSERT_EQ((int)fr.n_samples, 0);
+    ASSERT_EQ(fr.window_start, 0.0);
+    ASSERT_EQ(fr.closed, false);
 }
 REGISTER_TEST(test_flowrec_seq_field_defaults);
 
