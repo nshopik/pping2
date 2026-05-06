@@ -459,8 +459,10 @@ static void process_packet(const Packet& pkt)
     flowRec* fr;
     if (inserted) {
         if (flowCnt >= maxFlows) {
-            std::cerr << "flow limit (" << maxFlows << ") reached, dropping new flow: "
-                      << flowKeyName(fk) << "\n";
+            // Cap rejection — increment counter; the per-packet stderr line
+            // was removed because at high pps it would flood stderr. Counter
+            // surfaces in printSummary as "<n> flows dropped (cap),".
+            ++flowsDropped;
             flows.erase(fit);
             return;
         }
@@ -805,6 +807,8 @@ static void printSummary()
                  printnz(seqSamples, " seq samples, ") +
                  printnz(seqKarnDrops, " seq karn drops, ") +
                  printnz(seqStale, " seq stale, ") +
+                 printnz(aggregatedRows, " aggregated rows, ") +
+                 printnz(flowsDropped, " flows dropped (cap), ") +
                  "\n";
 }
 
@@ -1073,6 +1077,8 @@ int main(int argc, char* const* argv)
                 seqSamples = 0;
                 seqKarnDrops = 0;
                 seqStale = 0;
+                aggregatedRows = 0;
+                flowsDropped = 0;
             }
             nxtSum = capTm + sumInt;
 
