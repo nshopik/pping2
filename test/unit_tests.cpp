@@ -554,10 +554,16 @@ static void test_emit_human_format()
     offTm = 1700000000;
     capTm = 0.0;
 
-    // Two calls within the same integer second; both should print "22:13:20".
+    // Three calls: first two share an integer second (cache populate + cache hit),
+    // third advances capTm by 1.0 to force a cache invalidation.  A bug that
+    // short-circuited the cache (always reusing tbuff) would still pass the
+    // first two lines but fail the third with "22:13:20" instead of "22:13:21".
     std::string out = capture_stdout([&]() {
+        capTm = 0.0;
         emit(0.025, &fr, fk, 0, 0, 0, 't');
         emit(0.030, &fr, fk, 0, 0, 0, 's');
+        capTm = 1.0;
+        emit(0.040, &fr, fk, 0, 0, 0, 't');
     });
 
     // Restore globals
@@ -569,10 +575,11 @@ static void test_emit_human_format()
     // Expected exact bytes — exercises both the printf format and the %T value.
     // Format from emit() human branch: "%s %s %s %s:%u+%s:%u [%c]\n"
     // fmtTimeDiff(0.025) = "25.0ms", fmtTimeDiff(0.030) = "30.0ms",
-    // fmtTimeDiff(0.012) = "12.0ms".
+    // fmtTimeDiff(0.040) = "40.0ms", fmtTimeDiff(0.012) = "12.0ms".
     ASSERT_STR_EQ(out,
         "22:13:20 25.0ms 12.0ms 192.168.1.1:1234+10.0.0.1:80 [t]\n"
-        "22:13:20 30.0ms 12.0ms 192.168.1.1:1234+10.0.0.1:80 [s]\n");
+        "22:13:20 30.0ms 12.0ms 192.168.1.1:1234+10.0.0.1:80 [s]\n"
+        "22:13:21 40.0ms 12.0ms 192.168.1.1:1234+10.0.0.1:80 [t]\n");
 }
 REGISTER_TEST(test_emit_human_format);
 
