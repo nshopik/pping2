@@ -82,27 +82,12 @@ re-reads the env file every minute).
 
 ## How rotation works
 
-The rotation core in `pping-load.sh` is six lines:
-
-```bash
-if [ -f "$LOADFILE" ]; then
-    log warning "$LOADFILE present from previous run; skipping ..."
-    exit 0
-fi
-[ -s "$LOGFILE" ] || exit 0
-mv "$LOGFILE" "$LOADFILE"
-systemctl reload pping.service
-"$ingest_fn" 2> >(logger -s ...) && rm "$LOADFILE"
-```
-
-`mv` is atomic at the dirent level — pping's open fd still points at the
-renamed inode, so no rows are lost across the rename. `systemctl reload`
-sends SIGHUP; pping checks the reopen flag inside its packet loop, woken
-every 250ms by libtins's pcap timeout, so the worst-case gap between rename
-and reopen is ~250ms. Rows written during that window land in `.load` and
-ingest normally. On ingest failure the `.load` file persists; the next
-minute's run sees it at the top and exits, preserving data until ClickHouse
-is reachable again.
+`pping-load.sh` rotates by `mv` — atomic at the dirent level, so pping's
+open fd stays valid on the renamed inode and no rows are lost. `systemctl
+reload` then sends SIGHUP; pping reopens its `--logfile` path on the next
+packet-loop tick, capped at libtins's 250ms pcap timeout. On ingest failure
+the `.load` file persists; the next minute's run sees it at the top and
+exits, preserving data until ClickHouse is reachable again.
 
 ## Tuning the load
 
