@@ -574,7 +574,9 @@ static void process_packet(const Packet& pkt)
             // peer and written bytesDep to a fresh-but-unrelated flowRec; the
             // new behavior is strictly more conservative.
             if (fr->revFlowRec) fr->revFlowRec->bytesDep = fBytes;
-            emit(rtt, fr, fk, fBytes, dBytes, pBytes, /*tag=*/'t');
+            if (!aggregateOutput) {
+                emit(rtt, fr, fk, fBytes, dBytes, pBytes, /*tag=*/'t');
+            }
             eit->second.t = -t;
         }
     }
@@ -637,7 +639,9 @@ static void process_packet(const Packet& pkt)
                     const double dBytes = rr->bytesDep;
                     const double pBytes = rr->bytesSnt - rr->lstBytesSnt;
                     rr->lstBytesSnt = rr->bytesSnt;
-                    emit(rtt, rr, ffk, fBytes, dBytes, pBytes, /*tag=*/'s');
+                    if (!aggregateOutput) {
+                        emit(rtt, rr, ffk, fBytes, dBytes, pBytes, /*tag=*/'s');
+                    }
                 } else {
                     ++seqKarnDrops;
                 }
