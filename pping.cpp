@@ -1089,6 +1089,13 @@ int main(int argc, char* const* argv)
         }
     }
 
+    // Aggregator shutdown flush: drain every live flow with samples to
+    // guarantee no in-progress accumulator state is silently dropped on
+    // graceful exit (signal, end of pcap, -c, -s, --seconds).
+    if (aggregateOutput) {
+        cleanUp(capTm, /*flush_all=*/true);
+    }
+
     // File-mode only: wall-clock measures CPU-bound replay throughput, which
     // is the useful benchmark number. Live capture is bounded by what arrives
     // on the wire, not by pping, so the same number would just describe the

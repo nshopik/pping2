@@ -71,6 +71,17 @@ else
     fail "help_documents_a_and_flowmaxage" "help text missing -a or --flowMaxAge"
 fi
 
+# 8. -a flushes every live-at-end flow on -c cap (no measurements lost)
+# Run on the existing dns-tcp-linux pcap with -c truncating mid-replay.
+# We don't assert the exact count here (depends on packet ordering); we
+# only assert that aggregator output is non-empty.
+COUNT=$("$PPING" -a -c 20 -r "$SCRIPT_DIR/pcaps/dns-tcp-linux.pcap" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$COUNT" -gt 0 ]; then
+    pass "shutdown_flush_emits_rows"
+else
+    fail "shutdown_flush_emits_rows" "expected non-zero output rows from -c-truncated run"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo ""
 echo "test_cli: $PASS/$TOTAL checks passed"
