@@ -7,6 +7,7 @@ test/unit_tests
 # Local agent state — not part of the project
 CLAUDE.md
 .claude/
+docs/superpowers/
 
 # Python cache from test/synth/
 __pycache__/
