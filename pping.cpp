@@ -385,9 +385,19 @@ static void emit(double rtt, flowRec* fr, const FlowKey& fk,
                 rtt, ipsstr.buf.data(), ipdstr.buf.data());
     } else {
         std::time_t result = static_cast<std::time_t>(int64_t(capTm + offTm));
-        char tbuff[80];
-        struct tm* ptm = std::localtime(&result);
-        strftime(tbuff, 80, "%T", ptm);
+        // Cache the formatted %T string per integer second.  Otherwise
+        // std::localtime() triggers glibc's __tzset_internal which stat()s
+        // /etc/localtime on every call (15.22% kernel + 10.58% libc-side
+        // in the hot-path profile).  Same wall-clock second → reuse buffer.
+        // Single-threaded; if pping ever threads, make these thread-local.
+        static std::time_t cachedSec = 0;
+        static char tbuff[16];
+        if (result != cachedSec) {
+            cachedSec = result;
+            struct tm tmBuf;
+            localtime_r(&result, &tmBuf);
+            strftime(tbuff, sizeof tbuff, "%T", &tmBuf);
+        }
         printf("%s %s %s %s:%u+%s:%u [%c]\n",
                tbuff, fmtTimeDiff(rtt).c_str(),
                fmtTimeDiff(fr->min).c_str(),

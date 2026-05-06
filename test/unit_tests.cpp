@@ -530,6 +530,52 @@ static void test_emit_aggregated_seq_tag()
 }
 REGISTER_TEST(test_emit_aggregated_seq_tag);
 
+static void test_emit_human_format()
+{
+    // Pin TZ so the %T value is deterministic across CI hosts.
+    setenv("TZ", "UTC", 1);
+    tzset();
+
+    flowRec fr;
+    fr.last_tm = 0;
+    fr.min     = 0.012;     // 12.0ms
+
+    FlowKey fk = makeFlow4(192, 168, 1, 1, 10, 0, 0, 1, 1234, 80);
+
+    // Save / set globals
+    int64_t saved_off       = offTm;
+    bool    saved_machine   = machineReadable;
+    bool    saved_extended  = extendedMachineOutput;
+    double  saved_capTm     = capTm;
+    machineReadable = false;
+    extendedMachineOutput = false;
+    // Unix time 1700000000 = 2023-11-14 22:13:20 UTC.
+    // emit() reads capTm + offTm to form the wall-clock second.
+    offTm = 1700000000;
+    capTm = 0.0;
+
+    // Two calls within the same integer second; both should print "22:13:20".
+    std::string out = capture_stdout([&]() {
+        emit(0.025, &fr, fk, 0, 0, 0, 't');
+        emit(0.030, &fr, fk, 0, 0, 0, 's');
+    });
+
+    // Restore globals
+    offTm = saved_off;
+    machineReadable = saved_machine;
+    extendedMachineOutput = saved_extended;
+    capTm = saved_capTm;
+
+    // Expected exact bytes — exercises both the printf format and the %T value.
+    // Format from emit() human branch: "%s %s %s %s:%u+%s:%u [%c]\n"
+    // fmtTimeDiff(0.025) = "25.0ms", fmtTimeDiff(0.030) = "30.0ms",
+    // fmtTimeDiff(0.012) = "12.0ms".
+    ASSERT_STR_EQ(out,
+        "22:13:20 25.0ms 12.0ms 192.168.1.1:1234+10.0.0.1:80 [t]\n"
+        "22:13:20 30.0ms 12.0ms 192.168.1.1:1234+10.0.0.1:80 [s]\n");
+}
+REGISTER_TEST(test_emit_human_format);
+
 static void test_cleanUp_closed_emits_and_deletes()
 {
     flows.clear();
