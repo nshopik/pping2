@@ -244,6 +244,11 @@ static int tsDropped;
 static int seqSamples;     // production: RTT samples emitted via SEQ path
 static int seqKarnDrops;   // diagnostic: samples discarded by strict Karn
 static int seqStale;       // diagnostic: outstanding measurements aged out
+// Aggregator state. Off by default; -a / --aggregate enables.
+static bool aggregateOutput = false;
+static double flowMaxAge = 1800.;        // age-cap on per-flow accumulator (sec). 0=off.
+static int flowsDropped = 0;             // new flows rejected at maxFlows cap (per summary period)
+static int aggregatedRows = 0;           // -a rows emitted (per summary period)
 enum class Mode { TS, SEQ, HYBRID };
 static Mode mode = Mode::HYBRID;
 // Set by SIGINT/SIGTERM handler to break the packet loop cleanly so the

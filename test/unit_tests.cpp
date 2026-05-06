@@ -275,10 +275,12 @@ REGISTER_TEST(test_flowrec_seq_field_defaults);
 
 static void test_capacity_defaults()
 {
-    // Lock down the defaults documented in the per-flow aggregation spec.
-    // These are tripwires: an accidental change should fail the test.
-    ASSERT_EQ(maxFlows,  1048576);          // 1024^2
-    ASSERT_EQ(maxTSvals, (size_t)268435456); // 16^7 = 2^28
+    ASSERT_EQ(maxFlows,  1048576);
+    ASSERT_EQ(maxTSvals, (size_t)268435456);
+    ASSERT_EQ(flowMaxAge, 1800.);     // new: 30 min, middle ground for ClickHouse buckets
+    ASSERT_EQ(aggregateOutput, false);
+    ASSERT_EQ(flowsDropped,   0);
+    ASSERT_EQ(aggregatedRows, 0);
 }
 REGISTER_TEST(test_capacity_defaults);
 
