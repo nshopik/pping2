@@ -740,11 +740,13 @@ static struct option opts[] = {
     { "showLocal", no_argument,       nullptr, 'l' },
     { "machine",   no_argument,       nullptr, 'm' },
     { "extended",  no_argument,       nullptr, 'e' },
+    { "aggregate", no_argument,       nullptr, 'a' },
     { "sumInt",    required_argument, nullptr, 'S' },
     { "tsvalMaxAge", required_argument, nullptr, 'M' },
     { "flowMaxIdle", required_argument, nullptr, 'F' },
     { "help",      no_argument,       nullptr, 'h' },
     { "mode",      required_argument, nullptr,  0  },   // long-only
+    { "flowMaxAge", required_argument, nullptr, 0 },    // long-only
     { 0, 0, 0, 0 }
 };
 
@@ -825,7 +827,7 @@ int main(int argc, char* const* argv)
         exit(1);
     }
     int longindex = -1;
-    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqve",
+    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqvea",
                                  opts, &longindex)) != -1; ) {
         switch (c) {
         case 'i': liveInp = true; fname = optarg; break;
@@ -838,6 +840,7 @@ int main(int argc, char* const* argv)
         case 'l': filtLocal = false; break;
         case 'm': machineReadable = true; break;
         case 'e': machineReadable = true; extendedMachineOutput = true; break;
+        case 'a': aggregateOutput = true; break;
         case 'S': sumInt = atof(optarg); sumExplicit = true; break;
         case 'M': tsvalMaxAge = atof(optarg); break;
         case 'F': flowMaxIdle = atof(optarg); break;
@@ -854,10 +857,23 @@ int main(int argc, char* const* argv)
                               << " (expected ts, seq, or hybrid)\n";
                     exit(EXIT_FAILURE);
                 }
+            } else if (std::strcmp(name, "flowMaxAge") == 0) {
+                double v = atof(optarg);
+                if (v < 0.) {
+                    std::cerr << "fatal: --flowMaxAge=" << optarg
+                              << " must be >= 0 (0=disabled, default=1800)\n";
+                    exit(EXIT_FAILURE);
+                }
+                flowMaxAge = v;
             }
             break;
         }
         }
+    }
+    if (aggregateOutput && (extendedMachineOutput || machineReadable)) {
+        std::cerr << "fatal: -a/--aggregate is mutually exclusive with "
+                     "-e/--extended and -m/--machine\n";
+        exit(EXIT_FAILURE);
     }
     if (optind < argc || fname.empty()) {
         usage(argv[0]);
