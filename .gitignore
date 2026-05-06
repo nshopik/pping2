@@ -1,9 +1,13 @@
 pping
 test/unit_tests
 
+# WSL/local libtins build prefix (CI builds its own copy)
+.libtins/
+
 # Local agent state — not part of the project
 CLAUDE.md
 .claude/
+docs/superpowers/
 
 # Python cache from test/synth/
 __pycache__/

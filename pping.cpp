@@ -184,6 +184,16 @@ class flowRec
     bool     high_seq_init{false}; // sentinel-safe across full uint32 range
     bool     retx_flag{false};     // strict Karn: invalidate sample if set
 
+    // Aggregator state (used in --aggregate mode for per-flow rows).
+    uint32_t n_samples    = 0;        // RTT matches counted in current window;
+                                      // resets on age-cap fire.
+    double   window_start = 0.;       // capTm at flow creation (or last age-cap reset).
+                                      // 0.0 means "not yet seen a packet" — process_packet
+                                      // sets it on the inserted branch.
+    bool     closed       = false;    // first FIN observed on this direction's flowRec,
+                                      // or RST observed on either direction (peer's flag
+                                      // is set via revFlowRec from the RST-receiving side).
+
     // Set once on first packet through process_packet, then never modified.
     bool     tsCapable{false};
     bool     classified{false};
@@ -223,16 +233,22 @@ static double flowMaxIdle = 300.;   // flow idle time until flow forgotten
 static double sumInt = 10.;         // how often (sec) to print summary line
 static bool sumExplicit = false;    // user passed -q/-v/--sumInt; suppresses
                                     // the pcap-mode silent default below
-static int maxFlows = 65535;
+static int maxFlows = 1048576;   // 1024^2 — bumped per per-flow aggregation spec
 static int flowCnt;
-// tsTbl size cap. ~830MB IPv4 / ~1.1GB IPv6 at the cap. Sized for ~4-8x
-// headroom over a 100-200K pps DNS workload (typical observed peak < 2M
-// entries) and ~3% of a 32GB host's RAM under hostile flood.
-static size_t maxTSvals = 4000000;
+// tsTbl size cap. ~56GB IPv4 / ~74GB IPv6 at the cap (theoretical;
+// real workloads at 1Mpps stay single-digit GB via tsvalMaxAge age-out).
+// Sized large enough that 1Mpps captures don't hit the cap; the natural
+// bound is tsvalMaxAge * (TSval-tick-rate * concurrent-TS-flows).
+static size_t maxTSvals = 268435456;  // 16^7 = 2^28 — bumped per per-flow aggregation spec
 static int tsDropped;
 static int seqSamples;     // production: RTT samples emitted via SEQ path
 static int seqKarnDrops;   // diagnostic: samples discarded by strict Karn
 static int seqStale;       // diagnostic: outstanding measurements aged out
+// Aggregator state. Off by default; -a / --aggregate enables.
+static bool aggregateOutput = false;
+static double flowMaxAge = 1800.;        // age-cap on per-flow accumulator (sec). 0=off.
+static int flowsDropped = 0;             // new flows rejected at maxFlows cap (per summary period)
+static int aggregatedRows = 0;           // -a rows emitted (per summary period)
 enum class Mode { TS, SEQ, HYBRID };
 static Mode mode = Mode::HYBRID;
 // Set by SIGINT/SIGTERM handler to break the packet loop cleanly so the
@@ -366,6 +382,30 @@ static void emit(double rtt, flowRec* fr, const FlowKey& fk,
     }
 }
 
+// Aggregator output helper — emits one row per flow per closure-or-window event.
+// Called only from cleanUp; invariant: caller has verified n_samples > 0 and
+// aggregateOutput == true. Row timestamp uses fr->last_tm (not capTm at the
+// cleanUp tick) so emission time matches the last packet seen on this flow.
+// Format: "epoch.usec min_rtt n_samples srcIP sport dstIP dport node tag\n"
+static void emit_aggregated(const flowRec* fr, const FlowKey& fk)
+{
+    std::string ipsstr = ipToString(fk.srcIP, fk.af);
+    std::string ipdstr = ipToString(fk.dstIP, fk.af);
+    printf("%" PRId64 ".%06d %.6f %u %s %u %s %u %s %c\n",
+           int64_t(fr->last_tm + offTm),
+           int((fr->last_tm - floor(fr->last_tm)) * 1e6),
+           fr->min, fr->n_samples,
+           ipsstr.c_str(), fk.sport,
+           ipdstr.c_str(), fk.dport,
+           node.c_str(),
+           fr->tsCapable ? 't' : 's');
+    int64_t now = clock_now();
+    if (now - nextFlush >= 0) {
+        nextFlush = now + flushInt;
+        fflush(stdout);
+    }
+}
+
 static void process_packet(const Packet& pkt)
 {
     pktCnt++;
@@ -419,12 +459,15 @@ static void process_packet(const Packet& pkt)
     flowRec* fr;
     if (inserted) {
         if (flowCnt >= maxFlows) {
-            std::cerr << "flow limit (" << maxFlows << ") reached, dropping new flow: "
-                      << flowKeyName(fk) << "\n";
+            // Cap rejection — increment counter; the per-packet stderr line
+            // was removed because at high pps it would flood stderr. Counter
+            // surfaces in printSummary as "<n> flows dropped (cap),".
+            ++flowsDropped;
             flows.erase(fit);
             return;
         }
         fr = new flowRec();
+        fr->window_start = capTm;
         fit->second = fr;
         flowCnt++;
         // Reverse-flow lookup runs only on first-packet-of-flow, not per-packet.
@@ -466,6 +509,20 @@ static void process_packet(const Packet& pkt)
         uniDir++;
         return;
     }
+    // Close-flag detection. FIN is unidirectional in TCP — A's FIN closes A→B
+    // but B may still send. RST kills both directions; propagate to the peer
+    // flowRec via the cached pointer (null-checked since the peer may have
+    // been idle-evicted earlier).
+    {
+        const auto cflags = t_tcp->flags();
+        if (cflags & TCP::FIN) {
+            fr->closed = true;
+        }
+        if (cflags & TCP::RST) {
+            fr->closed = true;
+            if (fr->revFlowRec) fr->revFlowRec->closed = true;
+        }
+    }
     double arr_fwd = fr->bytesSnt + pkt.pdu()->size();
     fr->bytesSnt = arr_fwd;
 
@@ -505,6 +562,7 @@ static void process_packet(const Packet& pkt)
             double t = eit->second.t;
             double rtt = capTm - t;
             if (fr->min > rtt) fr->min = rtt;
+            ++fr->n_samples;   // aggregator: count this match in the current window
             double fBytes = eit->second.fBytes;
             double dBytes = eit->second.dBytes;
             double pBytes = arr_fwd - fr->lstBytesSnt;
@@ -518,7 +576,9 @@ static void process_packet(const Packet& pkt)
             // peer and written bytesDep to a fresh-but-unrelated flowRec; the
             // new behavior is strictly more conservative.
             if (fr->revFlowRec) fr->revFlowRec->bytesDep = fBytes;
-            emit(rtt, fr, fk, fBytes, dBytes, pBytes, /*tag=*/'t');
+            if (!aggregateOutput) {
+                emit(rtt, fr, fk, fBytes, dBytes, pBytes, /*tag=*/'t');
+            }
             eit->second.t = -t;
         }
     }
@@ -571,6 +631,7 @@ static void process_packet(const Packet& pkt)
                 rr->retx_flag       = false;
                 if (karn_clean) {
                     if (rr->min > rtt) rr->min = rtt;
+                    ++rr->n_samples;   // aggregator: count this match on the data-carrying flowRec
                     ++seqSamples;
 
                     // The RTT belongs to the forward (rr) flow; emit using
@@ -580,7 +641,9 @@ static void process_packet(const Packet& pkt)
                     const double dBytes = rr->bytesDep;
                     const double pBytes = rr->bytesSnt - rr->lstBytesSnt;
                     rr->lstBytesSnt = rr->bytesSnt;
-                    emit(rtt, rr, ffk, fBytes, dBytes, pBytes, /*tag=*/'s');
+                    if (!aggregateOutput) {
+                        emit(rtt, rr, ffk, fBytes, dBytes, pBytes, /*tag=*/'s');
+                    }
                 } else {
                     ++seqKarnDrops;
                 }
@@ -589,7 +652,7 @@ static void process_packet(const Packet& pkt)
     }
 }
 
-static void cleanUp(double n)
+static void cleanUp(double n, bool flush_all = false)
 {
     // erase entry if its TSval was seen more than tsvalMaxAge
     // seconds in the past.
@@ -602,14 +665,52 @@ static void cleanUp(double n)
     }
     for (auto it = flows.begin(); it != flows.end();) {
         flowRec* fr = it->second;
-        if (n - fr->last_tm > flowMaxIdle) {
+
+        // Determine emission reason. Priority: shutdown-flush > closed > idle > age-cap.
+        // shutdown-flush emits any flow with samples regardless of trigger.
+        bool emit_now    = false;
+        bool delete_after = false;
+        bool reset_window = false;
+
+        if (flush_all) {
+            emit_now = aggregateOutput && fr->n_samples > 0;
+            delete_after = true;
+        } else if (fr->closed) {
+            emit_now = aggregateOutput && fr->n_samples > 0;
+            delete_after = true;
+        } else if (n - fr->last_tm > flowMaxIdle) {
+            emit_now = aggregateOutput && fr->n_samples > 0;
+            delete_after = true;
+        } else if (aggregateOutput && flowMaxAge > 0. && capTm - fr->window_start > flowMaxAge) {
+            // Age-cap is aggregator-only: resetting fr->min/lstBytesSnt
+            // for non-agg modes would mid-stream-clear the running minRTT
+            // exposed in -e/-m/human output, violating the spec's
+            // "bit-for-bit unchanged" guarantee for those modes.
+            emit_now = fr->n_samples > 0;
+            reset_window = true;
+        }
+
+        if (emit_now) {
+            emit_aggregated(fr, it->first);
+            ++aggregatedRows;
+        }
+
+        if (delete_after) {
             // Unlink peer's cached pointer before delete to avoid dangling.
             if (fr->revFlowRec) fr->revFlowRec->revFlowRec = nullptr;
-            delete it->second;
+            delete fr;
             it = flows.erase(it);
             flowCnt--;
             continue;
         }
+
+        if (reset_window) {
+            fr->n_samples    = 0;
+            fr->min          = 1e30;
+            fr->window_start = capTm;
+            fr->lstBytesSnt  = fr->bytesSnt;
+        }
+
         // Age out unmatched SEQ-path outstanding measurements. Same threshold
         // as the TS-path tsTbl entries.
         if (fr->outstanding_end != 0 &&
@@ -710,6 +811,8 @@ static void printSummary()
                  printnz(seqSamples, " seq samples, ") +
                  printnz(seqKarnDrops, " seq karn drops, ") +
                  printnz(seqStale, " seq stale, ") +
+                 printnz(aggregatedRows, " aggregated rows, ") +
+                 printnz(flowsDropped, " flows dropped (cap), ") +
                  "\n";
 }
 
@@ -724,11 +827,13 @@ static struct option opts[] = {
     { "showLocal", no_argument,       nullptr, 'l' },
     { "machine",   no_argument,       nullptr, 'm' },
     { "extended",  no_argument,       nullptr, 'e' },
+    { "aggregate", no_argument,       nullptr, 'a' },
     { "sumInt",    required_argument, nullptr, 'S' },
     { "tsvalMaxAge", required_argument, nullptr, 'M' },
     { "flowMaxIdle", required_argument, nullptr, 'F' },
     { "help",      no_argument,       nullptr, 'h' },
     { "mode",      required_argument, nullptr,  0  },   // long-only
+    { "flowMaxAge", required_argument, nullptr, 0 },    // long-only
     { 0, 0, 0, 0 }
 };
 
@@ -763,6 +868,16 @@ static void help(const char* pname) {
 "                     Fields: timestamp rtt minRTT fBytes dBytes pBytes\n"
 "                     srcIP sport dstIP dport node\n"
 "\n"
+"  -a|--aggregate     emit one row per flow per closure-or-window event\n"
+"                     instead of one row per RTT match. Mutually exclusive\n"
+"                     with -e and -m. Row format (9 fields, space-separated):\n"
+"                       epoch.usec min_rtt n_samples srcIP sport dstIP dport node tag\n"
+"                     epoch.usec is the flow's last_tm; min_rtt is in seconds.\n"
+"                     Triggers: FIN/RST close (this dir for FIN, both for RST),\n"
+"                     idle expiry via --flowMaxIdle, age-cap via --flowMaxAge,\n"
+"                     and shutdown flush. Designed for direct ingestion into\n"
+"                     ClickHouse.\n"
+"\n"
 "  -c|--count num     stop after capturing <num> packets\n"
 "\n"
 "  -s|--seconds num   stop after capturing for <num> seconds \n"
@@ -780,6 +895,11 @@ static void help(const char* pname) {
 "  --tsvalMaxAge num  max age of an unmatched tsval (default 10s)\n"
 "\n"
 "  --flowMaxIdle num  flows idle longer than <num> are deleted (default 300s)\n"
+"\n"
+"  --flowMaxAge num   in -a mode, emit a row and reset the per-flow accumulator\n"
+"                     after the flow has been alive for <num> seconds (default\n"
+"                     1800). 0 disables — long flows then flush only on FIN,\n"
+"                     RST, idle, or shutdown. Negative values rejected.\n"
 "\n"
 "  --mode {ts,seq,hybrid}\n"
 "                     RTT measurement path. (default: hybrid)\n"
@@ -809,7 +929,7 @@ int main(int argc, char* const* argv)
         exit(1);
     }
     int longindex = -1;
-    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqve",
+    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqvea",
                                  opts, &longindex)) != -1; ) {
         switch (c) {
         case 'i': liveInp = true; fname = optarg; break;
@@ -822,6 +942,7 @@ int main(int argc, char* const* argv)
         case 'l': filtLocal = false; break;
         case 'm': machineReadable = true; break;
         case 'e': machineReadable = true; extendedMachineOutput = true; break;
+        case 'a': aggregateOutput = true; break;
         case 'S': sumInt = atof(optarg); sumExplicit = true; break;
         case 'M': tsvalMaxAge = atof(optarg); break;
         case 'F': flowMaxIdle = atof(optarg); break;
@@ -838,10 +959,23 @@ int main(int argc, char* const* argv)
                               << " (expected ts, seq, or hybrid)\n";
                     exit(EXIT_FAILURE);
                 }
+            } else if (std::strcmp(name, "flowMaxAge") == 0) {
+                double v = atof(optarg);
+                if (v < 0.) {
+                    std::cerr << "fatal: --flowMaxAge=" << optarg
+                              << " must be >= 0 (0=disabled, default=1800)\n";
+                    exit(EXIT_FAILURE);
+                }
+                flowMaxAge = v;
             }
             break;
         }
         }
+    }
+    if (aggregateOutput && (extendedMachineOutput || machineReadable)) {
+        std::cerr << "fatal: -a/--aggregate is mutually exclusive with "
+                     "-e/--extended and -m/--machine\n";
+        exit(EXIT_FAILURE);
     }
     if (optind < argc || fname.empty()) {
         usage(argv[0]);
@@ -947,6 +1081,8 @@ int main(int argc, char* const* argv)
                 seqSamples = 0;
                 seqKarnDrops = 0;
                 seqStale = 0;
+                aggregatedRows = 0;
+                flowsDropped = 0;
             }
             nxtSum = capTm + sumInt;
 
@@ -955,6 +1091,13 @@ int main(int argc, char* const* argv)
             cleanUp(capTm);  // get rid of stale entries
             nxtClean = capTm + tsvalMaxAge;
         }
+    }
+
+    // Aggregator shutdown flush: drain every live flow with samples to
+    // guarantee no in-progress accumulator state is silently dropped on
+    // graceful exit (signal, end of pcap, -c, -s, --seconds).
+    if (aggregateOutput) {
+        cleanUp(capTm, /*flush_all=*/true);
     }
 
     // File-mode only: wall-clock measures CPU-bound replay throughput, which

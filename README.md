@@ -25,6 +25,14 @@ For an XDP/eBPF-based ISP-scale variant, see [thebracket/cpumap-pping](https://g
 - **Extended machine-readable output** (`-e`) — adds byte counters, separate
   source/dest port columns, capture-node FQDN, and the `t`/`s` path tag.
   Designed for direct ingestion into ClickHouse or similar.
+- **Aggregated output mode** (`-a`/`--aggregate`) — one row per flow per
+  closure or window instead of one row per RTT match. Substantially lower
+  ClickHouse ingest cost on busy capture points; emit-on-close, emit-on-idle,
+  emit-on-age-cap, and shutdown-flush triggers. New knob `--flowMaxAge`
+  controls the per-flow rolling window (default 1800s).
+- **Higher default capacity** — `maxFlows` raised from 65535 to 1,048,576;
+  `maxTSvals` raised from 4M to 256M. The per-rejection stderr line is
+  replaced by a counter in the periodic summary line.
 - **Privilege drop + compile hardening** — opens the packet socket as root,
   then drops to `nobody` before parsing untrusted bytes.
   `-fstack-protector-strong`, `-D_FORTIFY_SOURCE=2`, full RELRO, NX stack.
@@ -162,6 +170,28 @@ Twelve space-separated fields, no quoting. `RTT` and `minRTT` are in seconds.
 `pBytes` is bytes since the previous RTT sample on this flow. `node` is the
 capture host's FQDN. `tag` is `t` (TS path) or `s` (SEQ path). Designed for
 direct ingestion into ClickHouse or similar.
+
+### `-a` — aggregated, one row per flow
+
+```
+epoch.usec min_rtt n_samples srcIP sport dstIP dport node tag
+```
+
+```
+1715876442.123456 0.008700 247 192.168.1.5 54321 34.107.221.82 443 host.example.com t
+```
+
+Nine space-separated fields, no quoting. One row per flow per closure-or-window event instead of one row per RTT match. Designed for direct ingestion into ClickHouse where downstream aggregation only consumes per-flow `min` RTT.
+
+`epoch.usec` is the flow's `last_tm` (last packet time). `min_rtt` is the minimum RTT observed in this row's window. `n_samples` is the count of RTT matches contributing to `min_rtt`; useful for downstream confidence filtering. `tag` is `t` (TS path) or `s` (SEQ path), constant per flow.
+
+Triggers: FIN (this direction's flow), RST (both directions), idle expiry via `--flowMaxIdle`, age-cap via `--flowMaxAge`, and shutdown flush. Mutually exclusive with `-e` and `-m`.
+
+```Shell
+./pping -a -r capture.pcap                     # aggregated; default age-cap = 1800s
+./pping -a --flowMaxAge=900 -r capture.pcap    # 15-min windows for investigation
+./pping -a --flowMaxAge=0   -r capture.pcap    # cap disabled — emit on close/idle only
+```
 
 ## Measurement modes
 

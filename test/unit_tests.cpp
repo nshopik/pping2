@@ -266,8 +266,23 @@ static void test_flowrec_seq_field_defaults()
     ASSERT_EQ(fr.tsCapable, false);
     ASSERT_EQ(fr.classified, false);
     ASSERT_EQ(fr.revFlowRec, (flowRec*)nullptr);
+    // Aggregator additions:
+    ASSERT_EQ((int)fr.n_samples, 0);
+    ASSERT_EQ(fr.window_start, 0.0);
+    ASSERT_EQ(fr.closed, false);
 }
 REGISTER_TEST(test_flowrec_seq_field_defaults);
+
+static void test_capacity_defaults()
+{
+    ASSERT_EQ(maxFlows,  1048576);
+    ASSERT_EQ(maxTSvals, (size_t)268435456);
+    ASSERT_EQ(flowMaxAge, 1800.);     // new: 30 min, middle ground for ClickHouse buckets
+    ASSERT_EQ(aggregateOutput, false);
+    ASSERT_EQ(flowsDropped,   0);
+    ASSERT_EQ(aggregatedRows, 0);
+}
+REGISTER_TEST(test_capacity_defaults);
 
 /* -------------------------------------------------------------------------
  * addTS / cleanUp — migrated to FlowKey/TsKey + tsInfo-by-value.
@@ -398,6 +413,410 @@ static void test_cleanUp()
     flowCnt = 0;
 }
 REGISTER_TEST(test_cleanUp);
+
+/* -------------------------------------------------------------------------
+ * emit_aggregated — formats one row to stdout in the -a / --aggregate
+ * 9-field schema. Captures stdout via dup2 so we can assert the bytes.
+ * ---------------------------------------------------------------------- */
+#include <fcntl.h>
+#include <unistd.h>
+
+static std::string capture_stdout(std::function<void()> fn)
+{
+    fflush(stdout);
+    int saved_fd = dup(fileno(stdout));
+    FILE* tmp = tmpfile();
+    if (!tmp) { perror("tmpfile"); return ""; }
+    dup2(fileno(tmp), fileno(stdout));
+
+    fn();
+
+    fflush(stdout);
+    dup2(saved_fd, fileno(stdout));
+    close(saved_fd);
+
+    rewind(tmp);
+    char buf[1024];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, tmp);
+    buf[n] = 0;
+    fclose(tmp);
+    return std::string(buf);
+}
+
+static void test_emit_aggregated_format()
+{
+    flowRec fr;
+    fr.last_tm    = 12.345;
+    fr.min        = 0.005;
+    fr.n_samples  = 7;
+    fr.tsCapable  = true;
+
+    FlowKey fk = makeFlow4(192, 168, 1, 1, 10, 0, 0, 1, 1234, 80);
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    offTm = 1700000000;
+    node = "testhost";
+
+    std::string out = capture_stdout([&]() { emit_aggregated(&fr, fk); });
+
+    offTm = saved_off;
+    node = saved_node;
+
+    ASSERT_STR_EQ(out,
+        "1700000012.345000 0.005000 7 192.168.1.1 1234 10.0.0.1 80 testhost t\n");
+}
+REGISTER_TEST(test_emit_aggregated_format);
+
+static void test_emit_aggregated_seq_tag()
+{
+    flowRec fr;
+    fr.last_tm    = 5.0;
+    fr.min        = 0.012;
+    fr.n_samples  = 3;
+    fr.tsCapable  = false;     // SEQ-only flow
+
+    FlowKey fk = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    offTm = 0;
+    node = "h";
+
+    std::string out = capture_stdout([&]() { emit_aggregated(&fr, fk); });
+
+    offTm = saved_off;
+    node = saved_node;
+
+    ASSERT_STR_EQ(out,
+        "5.000000 0.012000 3 10.0.0.1 1 10.0.0.2 2 h s\n");
+}
+REGISTER_TEST(test_emit_aggregated_seq_tag);
+
+static void test_cleanUp_closed_emits_and_deletes()
+{
+    flows.clear();
+    tsTbl.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    // Save & set globals
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    bool saved_agg = aggregateOutput;
+    offTm = 0;
+    node = "h";
+    aggregateOutput = true;
+    capTm = 100.0;
+
+    // Closed flow with samples — should emit + delete
+    FlowKey f1 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr1 = new flowRec();
+    fr1->last_tm = 50.0;
+    fr1->min = 0.001;
+    fr1->n_samples = 4;
+    fr1->closed = true;
+    fr1->tsCapable = true;
+    fr1->window_start = 10.0;
+    flows[f1] = fr1;
+    flowCnt = 1;
+
+    // Closed flow with no samples — should silently delete (no emit)
+    FlowKey f2 = makeFlow4(10, 0, 0, 3, 10, 0, 0, 4, 1, 2);
+    flowRec* fr2 = new flowRec();
+    fr2->last_tm = 50.0;
+    fr2->min = 1e30;
+    fr2->n_samples = 0;
+    fr2->closed = true;
+    flows[f2] = fr2;
+    flowCnt = 2;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    // Both deleted
+    ASSERT_EQ(flows.count(f1), 0u);
+    ASSERT_EQ(flows.count(f2), 0u);
+    ASSERT_EQ(flowCnt, 0);
+    ASSERT_EQ(aggregatedRows, 1);
+
+    // Output: exactly one line for f1
+    int newlines = 0;
+    for (char c : out) if (c == '\n') ++newlines;
+    ASSERT_EQ(newlines, 1);
+
+    // Restore
+    offTm = saved_off;
+    node = saved_node;
+    aggregateOutput = saved_agg;
+}
+REGISTER_TEST(test_cleanUp_closed_emits_and_deletes);
+
+static void test_cleanUp_idle_with_samples_emits()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    bool saved_agg = aggregateOutput;
+    offTm = 0;
+    node = "h";
+    aggregateOutput = true;
+    capTm = 1000.0;
+
+    // Idle flow with samples — emits + deletes.
+    // flowMaxIdle = 300 by default; idle = 1000 - 600 = 400 > 300.
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 600.0;
+    fr->min = 0.002;
+    fr->n_samples = 5;
+    fr->tsCapable = true;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    ASSERT_EQ(flows.count(f), 0u);
+    ASSERT_EQ(flowCnt, 0);
+    ASSERT_EQ(aggregatedRows, 1);
+    int newlines = 0;
+    for (char c : out) if (c == '\n') ++newlines;
+    ASSERT_EQ(newlines, 1);
+
+    offTm = saved_off;
+    node = saved_node;
+    aggregateOutput = saved_agg;
+}
+REGISTER_TEST(test_cleanUp_idle_with_samples_emits);
+
+static void test_cleanUp_idle_zero_samples_silent_delete()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    bool saved_agg = aggregateOutput;
+    aggregateOutput = true;
+    capTm = 1000.0;
+
+    // Idle flow with zero samples — silently deleted, no emit.
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 600.0;
+    fr->n_samples = 0;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    ASSERT_EQ(flows.count(f), 0u);
+    ASSERT_EQ(flowCnt, 0);
+    ASSERT_EQ(aggregatedRows, 0);
+    ASSERT_STR_EQ(out, "");
+
+    aggregateOutput = saved_agg;
+}
+REGISTER_TEST(test_cleanUp_idle_zero_samples_silent_delete);
+
+static void test_cleanUp_age_cap_resets_window_keeps_tcp_state()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    bool saved_agg = aggregateOutput;
+    double saved_age = flowMaxAge;
+    offTm = 0;
+    node = "h";
+    aggregateOutput = true;
+    flowMaxAge = 100.;     // small for the test
+    capTm = 200.0;
+
+    // Active flow — packets recent, but window started long ago.
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 195.0;        // recent — not idle
+    fr->window_start = 50.0;    // 200 - 50 = 150 > flowMaxAge (100): cap fires
+    fr->min = 0.003;
+    fr->n_samples = 9;
+    fr->tsCapable = true;
+    // Some TCP state we expect to be preserved:
+    fr->high_seq = 12345;
+    fr->high_seq_init = true;
+    fr->outstanding_end = 67890;
+    fr->outstanding_time = 195.0;
+    fr->bytesSnt = 1000.0;
+    fr->lstBytesSnt = 800.0;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    // Flow still in table
+    ASSERT_EQ(flows.count(f), 1u);
+    ASSERT_EQ(flowCnt, 1);
+    ASSERT_EQ(aggregatedRows, 1);
+    int newlines = 0;
+    for (char c : out) if (c == '\n') ++newlines;
+    ASSERT_EQ(newlines, 1);
+
+    flowRec* alive = flows[f];
+    // Aggregator state reset:
+    ASSERT_EQ((int)alive->n_samples, 0);
+    ASSERT_EQ(alive->min, 1e30);
+    ASSERT_EQ(alive->window_start, capTm);
+    ASSERT_EQ(alive->lstBytesSnt, alive->bytesSnt);
+    // TCP state preserved:
+    ASSERT_EQ((int)alive->high_seq, 12345);
+    ASSERT_EQ(alive->high_seq_init, true);
+    ASSERT_EQ((int)alive->outstanding_end, 67890);
+    ASSERT_EQ(alive->outstanding_time, 195.0);
+    ASSERT_EQ(alive->bytesSnt, 1000.0);
+
+    delete flows[f];
+    flows.clear();
+    flowCnt = 0;
+    offTm = saved_off;
+    node = saved_node;
+    aggregateOutput = saved_agg;
+    flowMaxAge = saved_age;
+}
+REGISTER_TEST(test_cleanUp_age_cap_resets_window_keeps_tcp_state);
+
+static void test_cleanUp_age_cap_skipped_in_non_agg_mode()
+{
+    // Bit-for-bit guarantee: in non-aggregator modes (-e, -m, human), an
+    // age-cap-eligible flow must not be reset. fr->min and fr->lstBytesSnt
+    // are visible in -e output; resetting them mid-flow would corrupt
+    // the running minRTT and pBytes columns.
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    bool saved_agg = aggregateOutput;
+    double saved_age = flowMaxAge;
+    aggregateOutput = false;     // non-agg mode
+    flowMaxAge = 100.;           // small for the test
+    capTm = 200.0;
+
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 195.0;          // recent — not idle
+    fr->window_start = 50.0;      // 200 - 50 = 150 > flowMaxAge (100)
+    fr->min = 0.003;
+    fr->n_samples = 9;
+    fr->bytesSnt = 1000.0;
+    fr->lstBytesSnt = 800.0;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    // No emit, no reset — flow untouched in non-agg mode.
+    ASSERT_EQ(aggregatedRows, 0);
+    ASSERT_STR_EQ(out, "");
+    flowRec* alive = flows[f];
+    ASSERT_EQ(alive->min, 0.003);                // untouched
+    ASSERT_EQ(alive->lstBytesSnt, 800.0);        // untouched
+    ASSERT_EQ(alive->window_start, 50.0);        // untouched
+    ASSERT_EQ((int)alive->n_samples, 9);         // untouched
+
+    delete flows[f];
+    flows.clear();
+    flowCnt = 0;
+    aggregateOutput = saved_agg;
+    flowMaxAge = saved_age;
+}
+REGISTER_TEST(test_cleanUp_age_cap_skipped_in_non_agg_mode);
+
+static void test_cleanUp_age_cap_disabled_when_zero()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    bool saved_agg = aggregateOutput;
+    double saved_age = flowMaxAge;
+    aggregateOutput = true;
+    flowMaxAge = 0.;       // disabled
+    capTm = 1e9;           // very large
+
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 1e9 - 1.;     // recent
+    fr->window_start = 0.0;     // long-ago — would cap-fire if cap were enabled
+    fr->n_samples = 5;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    // No emit, no reset.
+    ASSERT_EQ(aggregatedRows, 0);
+    ASSERT_STR_EQ(out, "");
+    ASSERT_EQ(flows[f]->window_start, 0.0);   // untouched
+    ASSERT_EQ((int)flows[f]->n_samples, 5);
+
+    delete flows[f];
+    flows.clear();
+    flowCnt = 0;
+    aggregateOutput = saved_agg;
+    flowMaxAge = saved_age;
+}
+REGISTER_TEST(test_cleanUp_age_cap_disabled_when_zero);
+
+static void test_cleanUp_flush_all_drains_active_flows()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    bool saved_agg = aggregateOutput;
+    offTm = 0;
+    node = "h";
+    aggregateOutput = true;
+    capTm = 100.0;
+
+    // Three active (non-idle, non-closed, no age-cap) flows.
+    // f1, f2 have samples (should emit), f3 has zero (silent delete).
+    FlowKey f1 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr1 = new flowRec();
+    fr1->last_tm = 99.0; fr1->min = 0.001; fr1->n_samples = 3; fr1->tsCapable = true;
+    flows[f1] = fr1;
+
+    FlowKey f2 = makeFlow4(10, 0, 0, 3, 10, 0, 0, 4, 3, 4);
+    flowRec* fr2 = new flowRec();
+    fr2->last_tm = 99.5; fr2->min = 0.002; fr2->n_samples = 7; fr2->tsCapable = false;
+    flows[f2] = fr2;
+
+    FlowKey f3 = makeFlow4(10, 0, 0, 5, 10, 0, 0, 6, 5, 6);
+    flowRec* fr3 = new flowRec();
+    fr3->last_tm = 99.0; fr3->n_samples = 0;
+    flows[f3] = fr3;
+
+    flowCnt = 3;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm, /*flush_all=*/true); });
+
+    // All three deleted. Two emitted.
+    ASSERT_EQ(flows.size(), 0u);
+    ASSERT_EQ(flowCnt, 0);
+    ASSERT_EQ(aggregatedRows, 2);
+    int newlines = 0;
+    for (char c : out) if (c == '\n') ++newlines;
+    ASSERT_EQ(newlines, 2);
+
+    offTm = saved_off;
+    node = saved_node;
+    aggregateOutput = saved_agg;
+}
+REGISTER_TEST(test_cleanUp_flush_all_drains_active_flows);
 
 /* -------------------------------------------------------------------------
  * Test runner

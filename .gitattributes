@@ -1,0 +1,18 @@
+# Force LF line endings in the working tree on every platform.
+# Required for WSL/Linux to run shell scripts and pcap-synth Python checked
+# out from a Windows host (otherwise CRLF terminators trip dash and bash).
+
+* text=auto eol=lf
+
+*.sh        text eol=lf
+*.py        text eol=lf
+*.cpp       text eol=lf
+*.h         text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+Makefile    text eol=lf
+LICENSE     text eol=lf
+.gitignore  text eol=lf
+
+*.pcap      binary
