@@ -71,33 +71,33 @@ static const char* g_current_test = nullptr;
 static void test_fmtTimeDiff()
 {
     // Sub-millisecond, scaled*1e6 < 10: 0.000001s → 1.0us (%.2lf → "1.00us")
-    ASSERT_STR_EQ(fmtTimeDiff(0.000001), "1.00us");
+    ASSERT_STR_EQ(fmtTimeDiff(0.000001).buf.data(), "1.00us");
 
     // Sub-millisecond, scaled*1e6 in [10,100): 0.0000123s → 12.3us ("12.3us")
-    ASSERT_STR_EQ(fmtTimeDiff(0.0000123), "12.3us");
+    ASSERT_STR_EQ(fmtTimeDiff(0.0000123).buf.data(), "12.3us");
 
     // Sub-millisecond, scaled*1e6 >= 100: 0.000456s → 456us (" %.0lf" → " 456us")
-    ASSERT_STR_EQ(fmtTimeDiff(0.000456), " 456us");
+    ASSERT_STR_EQ(fmtTimeDiff(0.000456).buf.data(), " 456us");
 
     // Exactly 1ms boundary: scaled*1e3 = 1.0 (%.2lf → "1.00ms")
-    ASSERT_STR_EQ(fmtTimeDiff(0.001), "1.00ms");
+    ASSERT_STR_EQ(fmtTimeDiff(0.001).buf.data(), "1.00ms");
 
     // Mid-millisecond, scaled in [10,100): 0.0123s → 12.3ms ("12.3ms")
-    ASSERT_STR_EQ(fmtTimeDiff(0.0123), "12.3ms");
+    ASSERT_STR_EQ(fmtTimeDiff(0.0123).buf.data(), "12.3ms");
 
     // Sub-second, scaled >= 100: 0.5s → 500ms (" %.0lf" → " 500ms")
-    ASSERT_STR_EQ(fmtTimeDiff(0.5), " 500ms");
+    ASSERT_STR_EQ(fmtTimeDiff(0.5).buf.data(), " 500ms");
 
     // Exactly 1s boundary: dt stays 1.0, prefix="" (%.2lf → "1.00s")
-    ASSERT_STR_EQ(fmtTimeDiff(1.0), "1.00s");
+    ASSERT_STR_EQ(fmtTimeDiff(1.0).buf.data(), "1.00s");
 
     // ~10s boundary: 9.99s uses %.2lf, 10.0s switches to %.1lf
-    ASSERT_STR_EQ(fmtTimeDiff(9.99), "9.99s");
-    ASSERT_STR_EQ(fmtTimeDiff(10.0), "10.0s");
+    ASSERT_STR_EQ(fmtTimeDiff(9.99).buf.data(), "9.99s");
+    ASSERT_STR_EQ(fmtTimeDiff(10.0).buf.data(), "10.0s");
 
     // ~100s boundary: 99.9s uses %.1lf, 100.0s switches to " %.0lf" (leading space)
-    ASSERT_STR_EQ(fmtTimeDiff(99.9), "99.9s");
-    ASSERT_STR_EQ(fmtTimeDiff(100.0), " 100s");
+    ASSERT_STR_EQ(fmtTimeDiff(99.9).buf.data(), "99.9s");
+    ASSERT_STR_EQ(fmtTimeDiff(100.0).buf.data(), " 100s");
 }
 REGISTER_TEST(test_fmtTimeDiff);
 

@@ -81,6 +81,7 @@
 #include <cmath>
 #include <array>
 #include <cstring>
+#include <charconv>
 #include "tins/tins.h"
 
 using namespace Tins;
@@ -328,27 +329,64 @@ static inline void addTS(const TsKey& key, const tsInfo& ti)
 //  a) longer than the largest time between TSval ticks
 //  b) longer than longest queue wait packets are expected to experience
 
-static std::string fmtTimeDiff(double dt)
+// Stack-buffer SI-formatter for time deltas.  Replaces a snprintf+std::string
+// path that showed up at 18.75% inclusive in the post-phase-1 perf profile —
+// 18.75% on __snprintf_chk plus per-call malloc/free for the std::string return.
+//
+// Output is byte-identical to the previous form: us/ms/s scale with adaptive
+// precision (two/one/zero fractional digits depending on magnitude tier),
+// leading space in the integer-precision tier so the column alignment in
+// human output stays the same.
+struct TimeDiffStr {
+    std::array<char, 16> buf;   // 8 bytes covers realistic inputs; 16 leaves margin
+                                // for sentinel/edge cases without risking overrun
+                                // if std::to_chars fills the digit region.
+};
+
+static inline TimeDiffStr fmtTimeDiff(double dt) noexcept
 {
-    const char* SIprefix = "";
+    TimeDiffStr s{};
+    char        siPrefix = '\0';
     if (dt < 1e-3) {
         dt *= 1e6;
-        SIprefix = "u";
-    } else if (dt < 1) {
+        siPrefix = 'u';
+    } else if (dt < 1.0) {
         dt *= 1e3;
-        SIprefix = "m";
-    } 
-    const char* fmt;
-    if (dt < 10.) {
-        fmt = "%.2lf%ss";
-    } else if (dt < 100.) {
-        fmt = "%.1lf%ss";
-    } else {
-        fmt = " %.0lf%ss";
+        siPrefix = 'm';
     }
-    char buf[10];
-    snprintf(buf, sizeof(buf), fmt, dt, SIprefix);
-    return buf;
+
+    int  precision;
+    bool leadingSpace;
+    if (dt < 10.) {
+        precision    = 2;       // "1.00", "9.99"
+        leadingSpace = false;
+    } else if (dt < 100.) {
+        precision    = 1;       // "12.3", "99.9"
+        leadingSpace = false;
+    } else {
+        precision    = 0;       // " 100", " 456"
+        leadingSpace = true;
+    }
+
+    char* p   = s.buf.data();
+    char* end = p + s.buf.size() - 1;   // leave room for NUL
+
+    if (leadingSpace) *p++ = ' ';
+
+    auto r = std::to_chars(p, end, dt, std::chars_format::fixed, precision);
+    if (r.ec != std::errc{}) {
+        // dt too large to fit (e.g., the 1e30 sentinel for flowRec::min).
+        // Return an empty NUL-terminated string rather than risking an
+        // OOB write from the suffix-append path below.
+        s.buf[0] = '\0';
+        return s;
+    }
+    p = r.ptr;
+
+    if (siPrefix) *p++ = siPrefix;
+    *p++ = 's';
+    *p   = '\0';
+    return s;
 }
 
 /*
@@ -399,8 +437,8 @@ static void emit(double rtt, flowRec* fr, const FlowKey& fk,
             strftime(tbuff, sizeof tbuff, "%T", &tmBuf);
         }
         printf("%s %s %s %s:%u+%s:%u [%c]\n",
-               tbuff, fmtTimeDiff(rtt).c_str(),
-               fmtTimeDiff(fr->min).c_str(),
+               tbuff, fmtTimeDiff(rtt).buf.data(),
+               fmtTimeDiff(fr->min).buf.data(),
                ipsstr.buf.data(), fk.sport, ipdstr.buf.data(), fk.dport,
                tag);
     }
