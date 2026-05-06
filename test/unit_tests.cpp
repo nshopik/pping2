@@ -723,6 +723,55 @@ static void test_cleanUp_age_cap_disabled_when_zero()
 }
 REGISTER_TEST(test_cleanUp_age_cap_disabled_when_zero);
 
+static void test_cleanUp_flush_all_drains_active_flows()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    bool saved_agg = aggregateOutput;
+    offTm = 0;
+    node = "h";
+    aggregateOutput = true;
+    capTm = 100.0;
+
+    // Three active (non-idle, non-closed, no age-cap) flows.
+    // f1, f2 have samples (should emit), f3 has zero (silent delete).
+    FlowKey f1 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr1 = new flowRec();
+    fr1->last_tm = 99.0; fr1->min = 0.001; fr1->n_samples = 3; fr1->tsCapable = true;
+    flows[f1] = fr1;
+
+    FlowKey f2 = makeFlow4(10, 0, 0, 3, 10, 0, 0, 4, 3, 4);
+    flowRec* fr2 = new flowRec();
+    fr2->last_tm = 99.5; fr2->min = 0.002; fr2->n_samples = 7; fr2->tsCapable = false;
+    flows[f2] = fr2;
+
+    FlowKey f3 = makeFlow4(10, 0, 0, 5, 10, 0, 0, 6, 5, 6);
+    flowRec* fr3 = new flowRec();
+    fr3->last_tm = 99.0; fr3->n_samples = 0;
+    flows[f3] = fr3;
+
+    flowCnt = 3;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm, /*flush_all=*/true); });
+
+    // All three deleted. Two emitted.
+    ASSERT_EQ(flows.size(), 0u);
+    ASSERT_EQ(flowCnt, 0);
+    ASSERT_EQ(aggregatedRows, 2);
+    int newlines = 0;
+    for (char c : out) if (c == '\n') ++newlines;
+    ASSERT_EQ(newlines, 2);
+
+    offTm = saved_off;
+    node = saved_node;
+    aggregateOutput = saved_agg;
+}
+REGISTER_TEST(test_cleanUp_flush_all_drains_active_flows);
+
 /* -------------------------------------------------------------------------
  * Test runner
  * ---------------------------------------------------------------------- */
