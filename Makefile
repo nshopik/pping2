@@ -67,7 +67,8 @@ install-systemd:
 	    > $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping.service
 	chmod 0644 $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping.service
 	install -d $(DESTDIR)$(SYSCONFDIR)/default
-	if [ ! -e $(DESTDIR)$(SYSCONFDIR)/default/pping ]; then \
+	if [ ! -e $(DESTDIR)$(SYSCONFDIR)/default/pping ] \
+	   && [ ! -L $(DESTDIR)$(SYSCONFDIR)/default/pping ]; then \
 	    install -m 0644 contrib/systemd/pping.default \
 	        $(DESTDIR)$(SYSCONFDIR)/default/pping; \
 	fi

@@ -33,6 +33,10 @@ For an XDP/eBPF-based ISP-scale variant, see [thebracket/cpumap-pping](https://g
 - **Higher default capacity** — `maxFlows` raised from 65535 to 1,048,576;
   `maxTSvals` raised from 4M to 256M. The per-rejection stderr line is
   replaced by a counter in the periodic summary line.
+- **`--logfile=PATH` flag** with SIGHUP-driven reopen — pping opens the
+  path append+create at startup and reopens on SIGHUP. Enables zero-copy
+  atomic log rotation by external tools (`mv` + `kill -HUP $pid`), used
+  by the bundled cron loader to ingest into ClickHouse.
 - **Privilege drop + compile hardening** — opens the packet socket as root,
   then drops to `nobody` before parsing untrusted bytes.
   `-fstack-protector-strong`, `-D_FORTIFY_SOURCE=2`, full RELRO, NX stack.

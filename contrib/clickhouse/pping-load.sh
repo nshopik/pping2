@@ -13,6 +13,11 @@ set -euo pipefail
 
 [ -r /etc/default/pping ] && . /etc/default/pping
 
+# tr ' ' '\t' below assumes pping's space-separated output has no spaces
+# inside fields. True for the current `-a` / `-e` formats (numerics, IPs,
+# RFC-bound FQDNs, single-char tags). If pping ever gains a field that
+# can contain spaces, this loader needs an awk/perl reformatter.
+
 LOGFILE="${PPING_LOGFILE:-/var/log/pping.log}"
 LOADFILE="${LOGFILE}.load"
 TABLE="${PPING_TABLE:-pping_flows}"
@@ -22,7 +27,7 @@ INGEST="${PPING_INGEST:-clickhouse-client}"
 [ ! -f "$LOADFILE" ] || exit 0    # previous load still in progress / failed; keep accumulating
 
 mv "$LOGFILE" "$LOADFILE"
-if ! systemctl reload pping.service 2>/dev/null; then
+if ! systemctl reload pping.service; then
     echo "$(date -Iseconds) pping-load: systemctl reload pping failed; pping is still writing to $LOADFILE — aborting load to preserve data" >&2
     exit 1
 fi
@@ -35,12 +40,12 @@ ingest_via_clickhouse_client() {
 ingest_via_curl() {
     : "${CH_URL:?CH_URL not set in /etc/default/pping (required when PPING_INGEST=curl)}"
     local full_table="${CH_DATABASE:+${CH_DATABASE}.}${TABLE}"
-    local auth_arg=""
-    [ -n "${CH_AUTH:-}" ] && auth_arg="-u $CH_AUTH"
+    local auth_arg=()
+    [ -n "${CH_AUTH:-}" ] && auth_arg=(-u "$CH_AUTH")
     {
         echo "INSERT INTO ${full_table} FORMAT TabSeparated"
         tr ' ' '\t' < "$LOADFILE"
-    } | curl -sS -f $auth_arg ${CH_CURL_OPTS:-} "$CH_URL/" --data-binary @-
+    } | curl -sS -f "${auth_arg[@]}" ${CH_CURL_OPTS:-} "$CH_URL/" --data-binary @-
 }
 
 case "$INGEST" in

@@ -772,6 +772,10 @@ static std::string localAddrOf(const std::string ifname)
 
 static void handleSignal(int) { stopRequested = 1; }
 
+// Async-signal-safe: only writes the volatile flag. Do NOT call
+// reopenLogfile() from here — it uses fflush/open/dup2/close which
+// are not async-signal-safe per signal-safety(7). The flag is
+// consumed on the main thread inside the packet loop.
 static void handleSighup(int) { reopenRequested = 1; }
 
 // Reopen the --logfile path: open a fresh fd, dup2 onto stdout, close the

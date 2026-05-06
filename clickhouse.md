@@ -88,18 +88,21 @@ The loader runs every minute via cron. Each cycle:
 
 1. `mv /var/log/pping.log /var/log/pping.log.load` — atomic at the dirent
    level, zero-copy. pping's open fd still points at the renamed inode.
-2. `systemctl reload pping.service` — sends SIGHUP through the supervisor
-   to all pping children. They reopen `--logfile` at its original path,
-   creating a fresh `/var/log/pping.log` (new inode) for new rows.
+2. `systemctl reload pping.service` — sends SIGHUP to pping. It reopens
+   `--logfile` at its original path, creating a fresh `/var/log/pping.log`
+   (new inode) for new rows.
 3. `tr ' ' '\t' < /var/log/pping.log.load | clickhouse-client INSERT...`
    — old rows go into ClickHouse.
 4. On success, `rm /var/log/pping.log.load`. On failure, the `.load` file
    stays on disk and the next minute's run skips (preserving the data) until
    the next ingest succeeds.
 
-This is fast even on busy hosts — no file copying, no truncation race. The
-only data lost across a rotation is whatever pping wrote in the microsecond
-window between `mv` and the SIGHUP being delivered.
+This is fast even on busy hosts — no file copying, no truncation race. pping
+checks the SIGHUP-set reopen flag inside its packet loop; with libtins's
+default pcap timeout (250ms; set at `pping.cpp` `set_timeout(250)`) the
+loop wakes at least four times a second even on quiet interfaces, so the
+worst-case delay between mv and reopen is ~250ms. Any rows pping writes in
+that window land in the `.load` file and are ingested normally.
 
 ## Tuning the load
 
