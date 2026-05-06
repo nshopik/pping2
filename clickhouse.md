@@ -54,10 +54,7 @@ CH_ARGS="--host ch.internal --user pping --password=hunter2 --database metrics"
 # CH_DATABASE=metrics
 ```
 
-**Multi-interface:** not supported in v1. Each unit instance monitors a
-single interface; running multiple capture points on one host means
-multiple unit instances (manual today). Proper multi-interface support
-will land alongside a per-row `interface` column in a future release.
+**Multi-interface:** not supported. Tracked in `TODOS.md`.
 
 **`CH_ARGS`** is passed unquoted to `clickhouse-client`, so multi-flag values
 like the example above just work. Values must not contain internal spaces;
@@ -85,25 +82,27 @@ re-reads the env file every minute).
 
 ## How rotation works
 
-The loader runs every minute via cron. Each cycle:
+The rotation core in `pping-load.sh` is six lines:
 
-1. `mv /var/log/pping/pping.log /var/log/pping/pping.log.load` — atomic at the dirent
-   level, zero-copy. pping's open fd still points at the renamed inode.
-2. `systemctl reload pping.service` — sends SIGHUP to pping. It reopens
-   `--logfile` at its original path, creating a fresh `/var/log/pping/pping.log`
-   (new inode) for new rows.
-3. `tr ' ' '\t' < /var/log/pping/pping.log.load | clickhouse-client INSERT...`
-   — old rows go into ClickHouse.
-4. On success, `rm /var/log/pping/pping.log.load`. On failure, the `.load` file
-   stays on disk and the next minute's run skips (preserving the data) until
-   the next ingest succeeds.
+```bash
+if [ -f "$LOADFILE" ]; then
+    log warning "$LOADFILE present from previous run; skipping ..."
+    exit 0
+fi
+[ -s "$LOGFILE" ] || exit 0
+mv "$LOGFILE" "$LOADFILE"
+systemctl reload pping.service
+"$ingest_fn" 2> >(logger -s ...) && rm "$LOADFILE"
+```
 
-This is fast even on busy hosts — no file copying, no truncation race. pping
-checks the SIGHUP-set reopen flag inside its packet loop; with libtins's
-default pcap timeout (250ms; set at `pping.cpp` `set_timeout(250)`) the
-loop wakes at least four times a second even on quiet interfaces, so the
-worst-case delay between mv and reopen is ~250ms. Any rows pping writes in
-that window land in the `.load` file and are ingested normally.
+`mv` is atomic at the dirent level — pping's open fd still points at the
+renamed inode, so no rows are lost across the rename. `systemctl reload`
+sends SIGHUP; pping checks the reopen flag inside its packet loop, woken
+every 250ms by libtins's pcap timeout, so the worst-case gap between rename
+and reopen is ~250ms. Rows written during that window land in `.load` and
+ingest normally. On ingest failure the `.load` file persists; the next
+minute's run sees it at the top and exits, preserving data until ClickHouse
+is reachable again.
 
 ## Tuning the load
 

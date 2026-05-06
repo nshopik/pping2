@@ -28,6 +28,18 @@ Surfaced in the final review of the `seq-ack-rtt` branch. None block merge.
 
 - [ ] **Document the golden regeneration runbook.** The procedure (`make pcaps`, then per-pcap-per-mode `pping -e --mode <m> -r ... | awk '{$11=""; ...}'`) is captured implicitly across `test/test_seq.sh`, `test/synth/`, and `Makefile`. A short comment block at the top of `test_seq.sh` or a `## Regenerating goldens` section in README would help future maintainers.
 
+## Future features
+
+- [ ] **Multi-interface support with per-row `interface` column.** Today
+  each pping instance monitors a single interface; running multiple
+  capture points on one host means multiple manually-managed unit
+  instances. Proper support means accepting multiple `-i` flags (or a
+  comma-separated list), tagging each emitted row with the interface
+  name, and shipping a templated systemd unit (`pping@.service`) so
+  operators can `systemctl enable pping@eth0 pping@eth1`. Schema gains
+  an `interface LowCardinality(String)` column; `pping_flows` ORDER BY
+  may want to lead with `interface` for tenant-style queries.
+
 ## Install / packaging follow-ups
 
 Surfaced in the Opus adversarial review of the `install-quickstart` branch. None block merge; all are low-priority polish.
