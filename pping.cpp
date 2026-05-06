@@ -560,6 +560,7 @@ static void process_packet(const Packet& pkt)
             double t = eit->second.t;
             double rtt = capTm - t;
             if (fr->min > rtt) fr->min = rtt;
+            ++fr->n_samples;   // aggregator: count this match in the current window
             double fBytes = eit->second.fBytes;
             double dBytes = eit->second.dBytes;
             double pBytes = arr_fwd - fr->lstBytesSnt;
@@ -626,6 +627,7 @@ static void process_packet(const Packet& pkt)
                 rr->retx_flag       = false;
                 if (karn_clean) {
                     if (rr->min > rtt) rr->min = rtt;
+                    ++rr->n_samples;   // aggregator: count this match on the data-carrying flowRec
                     ++seqSamples;
 
                     // The RTT belongs to the forward (rr) flow; emit using
