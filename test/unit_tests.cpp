@@ -551,6 +551,178 @@ static void test_cleanUp_closed_emits_and_deletes()
 }
 REGISTER_TEST(test_cleanUp_closed_emits_and_deletes);
 
+static void test_cleanUp_idle_with_samples_emits()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    bool saved_agg = aggregateOutput;
+    offTm = 0;
+    node = "h";
+    aggregateOutput = true;
+    capTm = 1000.0;
+
+    // Idle flow with samples — emits + deletes.
+    // flowMaxIdle = 300 by default; idle = 1000 - 600 = 400 > 300.
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 600.0;
+    fr->min = 0.002;
+    fr->n_samples = 5;
+    fr->tsCapable = true;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    ASSERT_EQ(flows.count(f), 0u);
+    ASSERT_EQ(flowCnt, 0);
+    ASSERT_EQ(aggregatedRows, 1);
+    int newlines = 0;
+    for (char c : out) if (c == '\n') ++newlines;
+    ASSERT_EQ(newlines, 1);
+
+    offTm = saved_off;
+    node = saved_node;
+    aggregateOutput = saved_agg;
+}
+REGISTER_TEST(test_cleanUp_idle_with_samples_emits);
+
+static void test_cleanUp_idle_zero_samples_silent_delete()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    bool saved_agg = aggregateOutput;
+    aggregateOutput = true;
+    capTm = 1000.0;
+
+    // Idle flow with zero samples — silently deleted, no emit.
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 600.0;
+    fr->n_samples = 0;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    ASSERT_EQ(flows.count(f), 0u);
+    ASSERT_EQ(flowCnt, 0);
+    ASSERT_EQ(aggregatedRows, 0);
+    ASSERT_STR_EQ(out, "");
+
+    aggregateOutput = saved_agg;
+}
+REGISTER_TEST(test_cleanUp_idle_zero_samples_silent_delete);
+
+static void test_cleanUp_age_cap_resets_window_keeps_tcp_state()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    bool saved_agg = aggregateOutput;
+    double saved_age = flowMaxAge;
+    offTm = 0;
+    node = "h";
+    aggregateOutput = true;
+    flowMaxAge = 100.;     // small for the test
+    capTm = 200.0;
+
+    // Active flow — packets recent, but window started long ago.
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 195.0;        // recent — not idle
+    fr->window_start = 50.0;    // 200 - 50 = 150 > flowMaxAge (100): cap fires
+    fr->min = 0.003;
+    fr->n_samples = 9;
+    fr->tsCapable = true;
+    // Some TCP state we expect to be preserved:
+    fr->high_seq = 12345;
+    fr->high_seq_init = true;
+    fr->outstanding_end = 67890;
+    fr->outstanding_time = 195.0;
+    fr->bytesSnt = 1000.0;
+    fr->lstBytesSnt = 800.0;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    // Flow still in table
+    ASSERT_EQ(flows.count(f), 1u);
+    ASSERT_EQ(flowCnt, 1);
+    ASSERT_EQ(aggregatedRows, 1);
+    int newlines = 0;
+    for (char c : out) if (c == '\n') ++newlines;
+    ASSERT_EQ(newlines, 1);
+
+    flowRec* alive = flows[f];
+    // Aggregator state reset:
+    ASSERT_EQ((int)alive->n_samples, 0);
+    ASSERT_EQ(alive->min, 1e30);
+    ASSERT_EQ(alive->window_start, capTm);
+    ASSERT_EQ(alive->lstBytesSnt, alive->bytesSnt);
+    // TCP state preserved:
+    ASSERT_EQ((int)alive->high_seq, 12345);
+    ASSERT_EQ(alive->high_seq_init, true);
+    ASSERT_EQ((int)alive->outstanding_end, 67890);
+    ASSERT_EQ(alive->outstanding_time, 195.0);
+    ASSERT_EQ(alive->bytesSnt, 1000.0);
+
+    delete flows[f];
+    flows.clear();
+    flowCnt = 0;
+    offTm = saved_off;
+    node = saved_node;
+    aggregateOutput = saved_agg;
+    flowMaxAge = saved_age;
+}
+REGISTER_TEST(test_cleanUp_age_cap_resets_window_keeps_tcp_state);
+
+static void test_cleanUp_age_cap_disabled_when_zero()
+{
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    bool saved_agg = aggregateOutput;
+    double saved_age = flowMaxAge;
+    aggregateOutput = true;
+    flowMaxAge = 0.;       // disabled
+    capTm = 1e9;           // very large
+
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 1e9 - 1.;     // recent
+    fr->window_start = 0.0;     // long-ago — would cap-fire if cap were enabled
+    fr->n_samples = 5;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    // No emit, no reset.
+    ASSERT_EQ(aggregatedRows, 0);
+    ASSERT_STR_EQ(out, "");
+    ASSERT_EQ(flows[f]->window_start, 0.0);   // untouched
+    ASSERT_EQ((int)flows[f]->n_samples, 5);
+
+    delete flows[f];
+    flows.clear();
+    flowCnt = 0;
+    aggregateOutput = saved_agg;
+    flowMaxAge = saved_age;
+}
+REGISTER_TEST(test_cleanUp_age_cap_disabled_when_zero);
+
 /* -------------------------------------------------------------------------
  * Test runner
  * ---------------------------------------------------------------------- */
