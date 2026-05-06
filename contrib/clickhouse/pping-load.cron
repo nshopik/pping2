@@ -1,0 +1,2 @@
+# Batch-load pping output into ClickHouse every minute.
+* * * * * root /usr/local/bin/pping-load.sh
