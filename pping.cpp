@@ -681,8 +681,12 @@ static void cleanUp(double n, bool flush_all = false)
         } else if (n - fr->last_tm > flowMaxIdle) {
             emit_now = aggregateOutput && fr->n_samples > 0;
             delete_after = true;
-        } else if (flowMaxAge > 0. && capTm - fr->window_start > flowMaxAge) {
-            emit_now = aggregateOutput && fr->n_samples > 0;
+        } else if (aggregateOutput && flowMaxAge > 0. && capTm - fr->window_start > flowMaxAge) {
+            // Age-cap is aggregator-only: resetting fr->min/lstBytesSnt
+            // for non-agg modes would mid-stream-clear the running minRTT
+            // exposed in -e/-m/human output, violating the spec's
+            // "bit-for-bit unchanged" guarantee for those modes.
+            emit_now = fr->n_samples > 0;
             reset_window = true;
         }
 

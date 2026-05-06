@@ -687,6 +687,52 @@ static void test_cleanUp_age_cap_resets_window_keeps_tcp_state()
 }
 REGISTER_TEST(test_cleanUp_age_cap_resets_window_keeps_tcp_state);
 
+static void test_cleanUp_age_cap_skipped_in_non_agg_mode()
+{
+    // Bit-for-bit guarantee: in non-aggregator modes (-e, -m, human), an
+    // age-cap-eligible flow must not be reset. fr->min and fr->lstBytesSnt
+    // are visible in -e output; resetting them mid-flow would corrupt
+    // the running minRTT and pBytes columns.
+    flows.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    bool saved_agg = aggregateOutput;
+    double saved_age = flowMaxAge;
+    aggregateOutput = false;     // non-agg mode
+    flowMaxAge = 100.;           // small for the test
+    capTm = 200.0;
+
+    FlowKey f = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr = new flowRec();
+    fr->last_tm = 195.0;          // recent — not idle
+    fr->window_start = 50.0;      // 200 - 50 = 150 > flowMaxAge (100)
+    fr->min = 0.003;
+    fr->n_samples = 9;
+    fr->bytesSnt = 1000.0;
+    fr->lstBytesSnt = 800.0;
+    flows[f] = fr;
+    flowCnt = 1;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    // No emit, no reset — flow untouched in non-agg mode.
+    ASSERT_EQ(aggregatedRows, 0);
+    ASSERT_STR_EQ(out, "");
+    flowRec* alive = flows[f];
+    ASSERT_EQ(alive->min, 0.003);                // untouched
+    ASSERT_EQ(alive->lstBytesSnt, 800.0);        // untouched
+    ASSERT_EQ(alive->window_start, 50.0);        // untouched
+    ASSERT_EQ((int)alive->n_samples, 9);         // untouched
+
+    delete flows[f];
+    flows.clear();
+    flowCnt = 0;
+    aggregateOutput = saved_agg;
+    flowMaxAge = saved_age;
+}
+REGISTER_TEST(test_cleanUp_age_cap_skipped_in_non_agg_mode);
+
 static void test_cleanUp_age_cap_disabled_when_zero()
 {
     flows.clear();
