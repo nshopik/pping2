@@ -12,6 +12,11 @@ PPING_IFACE=eth0
 # this variable). See `pping --help` for the full flag list.
 PPING_FLAGS=-a
 
+# Path pping writes its output to (used by both the supervisor and the loader).
+# pping itself opens this path with --logfile and reopens on SIGHUP, so
+# external tools can rotate the file atomically.
+PPING_LOGFILE=/var/log/pping.log
+
 # --- ClickHouse loader settings (used by /usr/local/bin/pping-load.sh) ---
 
 # Destination table.
