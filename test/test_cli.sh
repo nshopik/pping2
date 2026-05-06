@@ -63,6 +63,14 @@ else
     fail "flowMaxAge_negative_rejected" "expected non-zero exit + flowMaxAge in stderr; got rc=$RC"
 fi
 
+# 7. -h/--help mentions -a and --flowMaxAge
+HELP=$("$PPING" --help 2>&1)
+if echo "$HELP" | grep -q "\-a|--aggregate" && echo "$HELP" | grep -q "flowMaxAge"; then
+    pass "help_documents_a_and_flowmaxage"
+else
+    fail "help_documents_a_and_flowmaxage" "help text missing -a or --flowMaxAge"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo ""
 echo "test_cli: $PASS/$TOTAL checks passed"
