@@ -465,6 +465,7 @@ static void process_packet(const Packet& pkt)
             return;
         }
         fr = new flowRec();
+        fr->window_start = capTm;
         fit->second = fr;
         flowCnt++;
         // Reverse-flow lookup runs only on first-packet-of-flow, not per-packet.
