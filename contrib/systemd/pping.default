@@ -17,7 +17,10 @@ PPING_FLAGS=-a
 # Destination table.
 PPING_TABLE=pping_flows
 
-# clickhouse-client arguments (host, database, credentials).
+# clickhouse-client arguments (host, database, credentials), space-separated.
 # Example:
 #   CH_ARGS="--host clickhouse.internal --database metrics --user pping --password=hunter2"
+# Values must not contain internal spaces (the loader word-splits this var).
+# For passwords with spaces, use a clickhouse-client config file:
+#   CH_ARGS="--config-file=/etc/clickhouse-client/pping.xml"
 CH_ARGS=

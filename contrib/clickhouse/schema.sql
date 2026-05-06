@@ -1,3 +1,11 @@
+-- pping aggregate-mode flows table. 9 columns matching the `-a` output format.
+--
+-- Apply to the `default` database with:
+--   clickhouse-client < schema.sql
+-- Or to a specific database:
+--   clickhouse-client --database metrics --multiquery < schema.sql
+-- (and ensure CH_ARGS in /etc/default/pping passes the same --database).
+
 CREATE TABLE IF NOT EXISTS pping_flows
 (
     `timestamp`  DateTime64(6),
