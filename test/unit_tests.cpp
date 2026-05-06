@@ -415,6 +415,85 @@ static void test_cleanUp()
 REGISTER_TEST(test_cleanUp);
 
 /* -------------------------------------------------------------------------
+ * emit_aggregated — formats one row to stdout in the -a / --aggregate
+ * 9-field schema. Captures stdout via dup2 so we can assert the bytes.
+ * ---------------------------------------------------------------------- */
+#include <fcntl.h>
+#include <unistd.h>
+
+static std::string capture_stdout(std::function<void()> fn)
+{
+    fflush(stdout);
+    int saved_fd = dup(fileno(stdout));
+    FILE* tmp = tmpfile();
+    if (!tmp) { perror("tmpfile"); return ""; }
+    dup2(fileno(tmp), fileno(stdout));
+
+    fn();
+
+    fflush(stdout);
+    dup2(saved_fd, fileno(stdout));
+    close(saved_fd);
+
+    rewind(tmp);
+    char buf[1024];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, tmp);
+    buf[n] = 0;
+    fclose(tmp);
+    return std::string(buf);
+}
+
+static void test_emit_aggregated_format()
+{
+    flowRec fr;
+    fr.last_tm    = 12.345;
+    fr.min        = 0.005;
+    fr.n_samples  = 7;
+    fr.tsCapable  = true;
+
+    FlowKey fk = makeFlow4(192, 168, 1, 1, 10, 0, 0, 1, 1234, 80);
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    offTm = 1700000000;
+    node = "testhost";
+
+    std::string out = capture_stdout([&]() { emit_aggregated(&fr, fk); });
+
+    offTm = saved_off;
+    node = saved_node;
+
+    ASSERT_STR_EQ(out,
+        "1700000012.345000 0.005000 7 192.168.1.1 1234 10.0.0.1 80 testhost t\n");
+}
+REGISTER_TEST(test_emit_aggregated_format);
+
+static void test_emit_aggregated_seq_tag()
+{
+    flowRec fr;
+    fr.last_tm    = 5.0;
+    fr.min        = 0.012;
+    fr.n_samples  = 3;
+    fr.tsCapable  = false;     // SEQ-only flow
+
+    FlowKey fk = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    offTm = 0;
+    node = "h";
+
+    std::string out = capture_stdout([&]() { emit_aggregated(&fr, fk); });
+
+    offTm = saved_off;
+    node = saved_node;
+
+    ASSERT_STR_EQ(out,
+        "5.000000 0.012000 3 10.0.0.1 1 10.0.0.2 2 h s\n");
+}
+REGISTER_TEST(test_emit_aggregated_seq_tag);
+
+/* -------------------------------------------------------------------------
  * Test runner
  * ---------------------------------------------------------------------- */
 

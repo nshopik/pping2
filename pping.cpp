@@ -382,6 +382,30 @@ static void emit(double rtt, flowRec* fr, const FlowKey& fk,
     }
 }
 
+// Aggregator output helper — emits one row per flow per closure-or-window event.
+// Called only from cleanUp; invariant: caller has verified n_samples > 0 and
+// aggregateOutput == true. Row timestamp uses fr->last_tm (not capTm at the
+// cleanUp tick) so emission time matches the last packet seen on this flow.
+// Format: "epoch.usec min_rtt n_samples srcIP sport dstIP dport node tag\n"
+static void emit_aggregated(const flowRec* fr, const FlowKey& fk)
+{
+    std::string ipsstr = ipToString(fk.srcIP, fk.af);
+    std::string ipdstr = ipToString(fk.dstIP, fk.af);
+    printf("%" PRId64 ".%06d %.6f %u %s %u %s %u %s %c\n",
+           int64_t(fr->last_tm + offTm),
+           int((fr->last_tm - floor(fr->last_tm)) * 1e6),
+           fr->min, fr->n_samples,
+           ipsstr.c_str(), fk.sport,
+           ipdstr.c_str(), fk.dport,
+           node.c_str(),
+           fr->tsCapable ? 't' : 's');
+    int64_t now = clock_now();
+    if (now - nextFlush >= 0) {
+        nextFlush = now + flushInt;
+        fflush(stdout);
+    }
+}
+
 static void process_packet(const Packet& pkt)
 {
     pktCnt++;
