@@ -11,7 +11,9 @@ set -euo pipefail
 PPING_FLAGS="${PPING_FLAGS:-}"
 
 pids=()
+_shutdown=0
 shutdown() {
+    _shutdown=1
     [ ${#pids[@]} -gt 0 ] && kill "${pids[@]}" 2>/dev/null || true
     wait 2>/dev/null || true
     exit 0
@@ -19,6 +21,7 @@ shutdown() {
 trap shutdown TERM INT
 
 for iface in $PPING_IFACE; do
+    [ "$_shutdown" -eq 1 ] && break
     /usr/local/bin/pping $PPING_FLAGS -i "$iface" &
     pids+=("$!")
 done

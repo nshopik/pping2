@@ -11,6 +11,7 @@ StandardOutput=append:/var/log/pping.log
 StandardError=journal
 Restart=always
 RestartSec=5
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target
