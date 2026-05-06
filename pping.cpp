@@ -62,6 +62,7 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -208,6 +209,27 @@ struct tsInfo {
 
 static std::unordered_map<FlowKey, flowRec*, ByteHash> flows;
 static std::unordered_map<TsKey, tsInfo, ByteHash> tsTbl;
+
+// Allocation-free IP-to-string formatter.  Wraps inet_ntop() with a
+// stack buffer sized for the longest IPv6 textual form.  Replaces
+// ipToString (which goes through libtins IPv{4,6}Address::to_string,
+// which uses std::ostringstream internally — visible in profiles as
+// _M_insert<unsigned long> and ~basic_ostringstream).
+//
+// `bytes` holds the address in network byte order: the first 4 bytes
+// for AF_INET, all 16 for AF_INET6 — matching the existing FlowKey
+// invariant.  `af` is 4 or 6, as elsewhere in pping.
+struct IpStr {
+    std::array<char, INET6_ADDRSTRLEN> buf;   // 46 bytes; always NUL-terminated
+};
+
+static inline IpStr ipToStr(const std::array<uint8_t, 16>& bytes, uint8_t af) noexcept
+{
+    IpStr s{};
+    inet_ntop(af == 4 ? AF_INET : AF_INET6,
+              bytes.data(), s.buf.data(), s.buf.size());
+    return s;
+}
 
 // Format a 16-byte IP slot (per af) as a printable string. Called only on the
 // rare/print paths — never on the hot per-packet path.

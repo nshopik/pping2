@@ -226,6 +226,43 @@ static void test_flowkey_v4_v6_disambig()
 }
 REGISTER_TEST(test_flowkey_v4_v6_disambig);
 
+static void test_ipToStr_v4()
+{
+    auto fmt = [](uint8_t a, uint8_t b, uint8_t c, uint8_t d) -> std::string {
+        std::array<uint8_t, 16> bytes{};
+        bytes[0] = a; bytes[1] = b; bytes[2] = c; bytes[3] = d;
+        IpStr s = ipToStr(bytes, 4);
+        return std::string(s.buf.data());
+    };
+
+    ASSERT_STR_EQ(fmt(0,   0,   0,   0),   "0.0.0.0");
+    ASSERT_STR_EQ(fmt(255, 255, 255, 255), "255.255.255.255");
+    ASSERT_STR_EQ(fmt(192, 168, 1,   1),   "192.168.1.1");
+    ASSERT_STR_EQ(fmt(10,  0,   0,   1),   "10.0.0.1");
+    ASSERT_STR_EQ(fmt(8,   8,   8,   8),   "8.8.8.8");
+}
+REGISTER_TEST(test_ipToStr_v4);
+
+static void test_ipToStr_v6()
+{
+    auto fmt = [](std::array<uint8_t, 16> bytes) -> std::string {
+        IpStr s = ipToStr(bytes, 6);
+        return std::string(s.buf.data());
+    };
+
+    // ::
+    ASSERT_STR_EQ(fmt({{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}}), "::");
+    // ::1
+    ASSERT_STR_EQ(fmt({{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1}}), "::1");
+    // ::ffff:1.2.3.4 — IPv4-mapped IPv6; inet_ntop renders the v4 dotted suffix
+    ASSERT_STR_EQ(fmt({{0,0,0,0,0,0,0,0,0,0,0xff,0xff,1,2,3,4}}), "::ffff:1.2.3.4");
+    // 2001:db8:: (full first hextet, rest zero)
+    ASSERT_STR_EQ(fmt({{0x20,0x01,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,0}}), "2001:db8::");
+    // fe80::1
+    ASSERT_STR_EQ(fmt({{0xfe,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,1}}), "fe80::1");
+}
+REGISTER_TEST(test_ipToStr_v6);
+
 static void test_seq_compare_wrap()
 {
     // Identity / adjacent
