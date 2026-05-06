@@ -223,12 +223,13 @@ static double flowMaxIdle = 300.;   // flow idle time until flow forgotten
 static double sumInt = 10.;         // how often (sec) to print summary line
 static bool sumExplicit = false;    // user passed -q/-v/--sumInt; suppresses
                                     // the pcap-mode silent default below
-static int maxFlows = 65535;
+static int maxFlows = 1048576;   // 1024^2 — bumped per per-flow aggregation spec
 static int flowCnt;
-// tsTbl size cap. ~830MB IPv4 / ~1.1GB IPv6 at the cap. Sized for ~4-8x
-// headroom over a 100-200K pps DNS workload (typical observed peak < 2M
-// entries) and ~3% of a 32GB host's RAM under hostile flood.
-static size_t maxTSvals = 4000000;
+// tsTbl size cap. ~56GB IPv4 / ~74GB IPv6 at the cap (theoretical;
+// real workloads at 1Mpps stay single-digit GB via tsvalMaxAge age-out).
+// Sized large enough that 1Mpps captures don't hit the cap; the natural
+// bound is tsvalMaxAge * (TSval-tick-rate * concurrent-TS-flows).
+static size_t maxTSvals = 268435456;  // 16^7 = 2^28 — bumped per per-flow aggregation spec
 static int tsDropped;
 static int seqSamples;     // production: RTT samples emitted via SEQ path
 static int seqKarnDrops;   // diagnostic: samples discarded by strict Karn

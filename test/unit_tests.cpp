@@ -269,6 +269,15 @@ static void test_flowrec_seq_field_defaults()
 }
 REGISTER_TEST(test_flowrec_seq_field_defaults);
 
+static void test_capacity_defaults()
+{
+    // Lock down the defaults documented in the per-flow aggregation spec.
+    // These are tripwires: an accidental change should fail the test.
+    ASSERT_EQ(maxFlows,  1048576);          // 1024^2
+    ASSERT_EQ(maxTSvals, (size_t)268435456); // 16^7 = 2^28
+}
+REGISTER_TEST(test_capacity_defaults);
+
 /* -------------------------------------------------------------------------
  * addTS / cleanUp — migrated to FlowKey/TsKey + tsInfo-by-value.
  * ---------------------------------------------------------------------- */
