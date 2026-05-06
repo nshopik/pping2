@@ -493,6 +493,64 @@ static void test_emit_aggregated_seq_tag()
 }
 REGISTER_TEST(test_emit_aggregated_seq_tag);
 
+static void test_cleanUp_closed_emits_and_deletes()
+{
+    flows.clear();
+    tsTbl.clear();
+    flowCnt = 0;
+    aggregatedRows = 0;
+
+    // Save & set globals
+    int64_t saved_off = offTm;
+    std::string saved_node = node;
+    bool saved_agg = aggregateOutput;
+    offTm = 0;
+    node = "h";
+    aggregateOutput = true;
+    capTm = 100.0;
+
+    // Closed flow with samples — should emit + delete
+    FlowKey f1 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1, 2);
+    flowRec* fr1 = new flowRec();
+    fr1->last_tm = 50.0;
+    fr1->min = 0.001;
+    fr1->n_samples = 4;
+    fr1->closed = true;
+    fr1->tsCapable = true;
+    fr1->window_start = 10.0;
+    flows[f1] = fr1;
+    flowCnt = 1;
+
+    // Closed flow with no samples — should silently delete (no emit)
+    FlowKey f2 = makeFlow4(10, 0, 0, 3, 10, 0, 0, 4, 1, 2);
+    flowRec* fr2 = new flowRec();
+    fr2->last_tm = 50.0;
+    fr2->min = 1e30;
+    fr2->n_samples = 0;
+    fr2->closed = true;
+    flows[f2] = fr2;
+    flowCnt = 2;
+
+    std::string out = capture_stdout([&]() { cleanUp(capTm); });
+
+    // Both deleted
+    ASSERT_EQ(flows.count(f1), 0u);
+    ASSERT_EQ(flows.count(f2), 0u);
+    ASSERT_EQ(flowCnt, 0);
+    ASSERT_EQ(aggregatedRows, 1);
+
+    // Output: exactly one line for f1
+    int newlines = 0;
+    for (char c : out) if (c == '\n') ++newlines;
+    ASSERT_EQ(newlines, 1);
+
+    // Restore
+    offTm = saved_off;
+    node = saved_node;
+    aggregateOutput = saved_agg;
+}
+REGISTER_TEST(test_cleanUp_closed_emits_and_deletes);
+
 /* -------------------------------------------------------------------------
  * Test runner
  * ---------------------------------------------------------------------- */

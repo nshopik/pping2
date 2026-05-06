@@ -629,7 +629,7 @@ static void process_packet(const Packet& pkt)
     }
 }
 
-static void cleanUp(double n)
+static void cleanUp(double n, bool flush_all = false)
 {
     // erase entry if its TSval was seen more than tsvalMaxAge
     // seconds in the past.
@@ -642,14 +642,48 @@ static void cleanUp(double n)
     }
     for (auto it = flows.begin(); it != flows.end();) {
         flowRec* fr = it->second;
-        if (n - fr->last_tm > flowMaxIdle) {
+
+        // Determine emission reason. Priority: shutdown-flush > closed > idle > age-cap.
+        // shutdown-flush emits any flow with samples regardless of trigger.
+        bool emit_now    = false;
+        bool delete_after = false;
+        bool reset_window = false;
+
+        if (flush_all) {
+            emit_now = aggregateOutput && fr->n_samples > 0;
+            delete_after = true;
+        } else if (fr->closed) {
+            emit_now = aggregateOutput && fr->n_samples > 0;
+            delete_after = true;
+        } else if (n - fr->last_tm > flowMaxIdle) {
+            emit_now = aggregateOutput && fr->n_samples > 0;
+            delete_after = true;
+        } else if (flowMaxAge > 0. && capTm - fr->window_start > flowMaxAge) {
+            emit_now = aggregateOutput && fr->n_samples > 0;
+            reset_window = true;
+        }
+
+        if (emit_now) {
+            emit_aggregated(fr, it->first);
+            ++aggregatedRows;
+        }
+
+        if (delete_after) {
             // Unlink peer's cached pointer before delete to avoid dangling.
             if (fr->revFlowRec) fr->revFlowRec->revFlowRec = nullptr;
-            delete it->second;
+            delete fr;
             it = flows.erase(it);
             flowCnt--;
             continue;
         }
+
+        if (reset_window) {
+            fr->n_samples    = 0;
+            fr->min          = 1e30;
+            fr->window_start = capTm;
+            fr->lstBytesSnt  = fr->bytesSnt;
+        }
+
         // Age out unmatched SEQ-path outstanding measurements. Same threshold
         // as the TS-path tsTbl entries.
         if (fr->outstanding_end != 0 &&
