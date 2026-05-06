@@ -25,6 +25,9 @@
 - Bundled ClickHouse loader (`contrib/clickhouse/`) — batch-load script,
   cron entry, and `pping_flows` table schema matching `-a` output.
   Loader rotates via atomic `mv` + `systemctl reload pping.service`.
+  Two ingest paths: `clickhouse-client` (default) speaks the native TCP
+  protocol; `curl` uses the HTTP interface and needs no extra packages
+  on the capture host. Selected via `PPING_INGEST` in `/etc/default/pping`.
 - Makefile `install`, `install-systemd`, `install-clickhouse`,
   `install-all` targets and matching `uninstall*` targets. `DESTDIR` and
   `PREFIX` honored for distro packagers; `setcap` is skipped with a

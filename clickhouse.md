@@ -42,7 +42,15 @@ PPING_IFACE=eth0                       # required; single interface only
 PPING_FLAGS=-a                         # default: aggregate mode (recommended)
 PPING_LOGFILE=/var/log/pping.log       # default; rotation pivots on this path
 PPING_TABLE=pping_flows                # default; only change if you renamed
+PPING_INGEST=clickhouse-client         # or 'curl' — see below
+
+# clickhouse-client mode:
 CH_ARGS="--host ch.internal --user pping --password=hunter2 --database metrics"
+
+# curl mode (alternative):
+# CH_URL=https://ch.internal:8443
+# CH_AUTH=pping:hunter2
+# CH_DATABASE=metrics
 ```
 
 **Multi-interface:** not supported in v1. Each unit instance monitors a
@@ -53,6 +61,26 @@ will land alongside a per-row `interface` column in a future release.
 **`CH_ARGS`** is passed unquoted to `clickhouse-client`, so multi-flag values
 like the example above just work. Values must not contain internal spaces;
 for passwords with spaces use a clickhouse-client config file.
+
+## Choosing an ingest method
+
+The loader supports two ingest paths, selected via `PPING_INGEST`:
+
+**`clickhouse-client` (default).** Requires the `clickhouse-client` binary
+on the capture host. Speaks ClickHouse's native TCP protocol — slightly
+more efficient than HTTP and supports every server feature.
+
+**`curl`.** Uses ClickHouse's HTTP interface. `curl` is preinstalled on
+nearly every distro, so this path needs no extra packages on the capture
+host. Particularly useful when the host is a minimal appliance or
+container that doesn't otherwise touch ClickHouse tooling. Configure with
+`CH_URL`, `CH_AUTH`, optional `CH_DATABASE`, and `CH_CURL_OPTS` for things
+like `--cacert` or `--max-time`.
+
+Both modes use the same loader cron entry, the same `mv` + `systemctl reload`
+rotation, and the same `.load` file retry semantics on failure. Switch by
+editing `/etc/default/pping`; no service restart required (the loader
+re-reads the env file every minute).
 
 ## How rotation works
 

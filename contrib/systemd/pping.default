@@ -23,10 +23,39 @@ PPING_LOGFILE=/var/log/pping.log
 # Destination table.
 PPING_TABLE=pping_flows
 
-# clickhouse-client arguments (host, database, credentials), space-separated.
+# Ingest method. 'clickhouse-client' (default) requires that binary on PATH;
+# 'curl' uses ClickHouse's HTTP interface and works on hosts that don't have
+# the clickhouse-client package installed.
+PPING_INGEST=clickhouse-client
+
+# --- clickhouse-client mode (PPING_INGEST=clickhouse-client) ---
+#
+# clickhouse-client arguments, space-separated. Values must not contain
+# internal spaces (the loader word-splits this var). For passwords with
+# spaces, use a clickhouse-client config file:
+#   CH_ARGS="--config-file=/etc/clickhouse-client/pping.xml"
 # Example:
 #   CH_ARGS="--host clickhouse.internal --database metrics --user pping --password=hunter2"
-# Values must not contain internal spaces (the loader word-splits this var).
-# For passwords with spaces, use a clickhouse-client config file:
-#   CH_ARGS="--config-file=/etc/clickhouse-client/pping.xml"
 CH_ARGS=
+
+# --- curl mode (PPING_INGEST=curl) ---
+#
+# Base URL of the ClickHouse HTTP interface (no trailing slash). Required
+# when PPING_INGEST=curl; ignored otherwise.
+# Examples:
+#   CH_URL=http://localhost:8123
+#   CH_URL=https://clickhouse.internal:8443
+CH_URL=
+
+# HTTP basic-auth credentials in user:password form. Leave empty for no auth.
+#   CH_AUTH=pping:hunter2
+CH_AUTH=
+
+# Optional database name. If set, the loader inserts into ${CH_DATABASE}.${PPING_TABLE}.
+# Leave empty to use the server's default database (or specify it in CH_URL).
+CH_DATABASE=
+
+# Extra curl flags, space-separated. Common uses:
+#   --cacert /etc/ssl/private/ca.crt   (custom CA bundle)
+#   --max-time 30                      (timeout override)
+CH_CURL_OPTS=
