@@ -5,7 +5,7 @@ CPPFLAGS += -I$(LIBTINS)/include
 LDFLAGS += -L$(LIBTINS)/lib -ltins -lpcap
 CXXFLAGS += -std=c++17 -g -O3 -Wall
 
-# Hardening: pping runs as root briefly to open the packet socket and
+# Hardening: pping2 runs as root briefly to open the packet socket and
 # then parses untrusted packets via libtins. Make a parse-time memory bug
 # harder to exploit. _FORTIFY_SOURCE requires -O1 or higher.
 CXXFLAGS += -fstack-protector-strong -fPIE \
@@ -19,13 +19,13 @@ endif
 # --- Install paths and packaging variables ---
 PREFIX      ?= /usr/local
 SYSCONFDIR  ?= /etc
-SHAREDIR    ?= $(PREFIX)/share/pping
+SHAREDIR    ?= $(PREFIX)/share/pping2
 DESTDIR     ?=
 
-pping:  pping.cpp
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o pping pping.cpp $(LDFLAGS)
+pping2:  pping.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o pping2 pping.cpp $(LDFLAGS)
 
-check: pping test/unit_tests
+check: pping2 test/unit_tests
 	@cd test && sh run_tests.sh
 
 test: check
@@ -34,7 +34,7 @@ test/unit_tests: test/unit_tests.cpp pping.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o test/unit_tests test/unit_tests.cpp $(LDFLAGS)
 
 clean:
-	rm -f pping test/unit_tests
+	rm -f pping2 test/unit_tests
 
 # Regenerate test fixtures from test/synth/. Requires scapy.
 pcaps:
@@ -45,75 +45,71 @@ pcaps:
 # and /etc/default literals so they remain runnable from a checkout.
 SUBST = sed \
     -e "s|/usr/local/bin|$(PREFIX)/bin|g" \
-    -e "s|/etc/default/pping|$(SYSCONFDIR)/default/pping|g"
+    -e "s|/etc/default/pping2|$(SYSCONFDIR)/default/pping2|g"
 
 # --- Install / uninstall ---
 
-install: pping
+# install does not depend on the build target so that pre-built binary
+# (tar.gz release) users can run `make install-all` without needing the
+# source or libtins. Source users: `make pping2 && sudo make install-all`.
+install:
+	@test -f pping2 || { echo "Build first: make pping2"; exit 1; }
 	install -d $(DESTDIR)$(PREFIX)/bin
-	install -m 0755 pping $(DESTDIR)$(PREFIX)/bin/pping
+	install -m 0755 pping2 $(DESTDIR)$(PREFIX)/bin/pping2
 ifeq ($(shell uname -s),Linux)
 	if [ -z "$(DESTDIR)" ]; then \
-	    setcap cap_net_raw+ep $(PREFIX)/bin/pping; \
+	    setcap cap_net_raw+ep $(PREFIX)/bin/pping2; \
 	else \
 	    echo ""; \
 	    echo "WARNING: setcap skipped because DESTDIR is set."; \
 	    echo "Apply in your packaging postinst (or run manually):"; \
-	    echo "  setcap cap_net_raw+ep $(PREFIX)/bin/pping"; \
+	    echo "  setcap cap_net_raw+ep $(PREFIX)/bin/pping2"; \
 	fi
 endif
 
 install-systemd:
 	install -d $(DESTDIR)$(SYSCONFDIR)/systemd/system
-	$(SUBST) contrib/systemd/pping.service \
-	    > $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping.service
-	chmod 0644 $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping.service
+	$(SUBST) contrib/systemd/pping2.service \
+	    > $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2.service
+	chmod 0644 $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2.service
 	install -d $(DESTDIR)$(SYSCONFDIR)/default
-	if [ ! -e $(DESTDIR)$(SYSCONFDIR)/default/pping ] \
-	   && [ ! -L $(DESTDIR)$(SYSCONFDIR)/default/pping ]; then \
-	    install -m 0644 contrib/systemd/pping.default \
-	        $(DESTDIR)$(SYSCONFDIR)/default/pping; \
+	if [ ! -e $(DESTDIR)$(SYSCONFDIR)/default/pping2 ] \
+	   && [ ! -L $(DESTDIR)$(SYSCONFDIR)/default/pping2 ]; then \
+	    install -m 0644 contrib/systemd/pping2.default \
+	        $(DESTDIR)$(SYSCONFDIR)/default/pping2; \
 	fi
-	# pping drops to `nobody` after opening the packet socket, so it
-	# needs a directory it can recreate the logfile in on SIGHUP. /var/log
-	# itself is root-owned, so without this the post-rotation reopen
-	# fails (EACCES) and pping silently keeps writing to the renamed
-	# .load inode — see CHANGELOG entry "logfile rotation under
-	# privilege drop".
-	install -d $(DESTDIR)/var/log/pping
-	# `id -gn nobody` pins the group to whatever `nobody`'s primary group
-	# is on this host (`nogroup` on Debian/Ubuntu, `nobody` on RHEL). Without
-	# it, the dir ends up `nobody:root`, which functionally works but looks
-	# like a half-finished install to a reader.
+	# pping2 drops to `nobody` after opening the packet socket, so it
+	# needs a directory it can recreate the logfile in on SIGHUP.
+	install -d $(DESTDIR)/var/log/pping2
 	if [ -z "$(DESTDIR)" ]; then \
-	    chown nobody:`id -gn nobody` /var/log/pping; \
+	    chown nobody:`id -gn nobody` /var/log/pping2; \
 	    systemctl daemon-reload; \
 	else \
 	    echo ""; \
 	    echo "WARNING: chown skipped because DESTDIR is set."; \
 	    echo "Apply in your packaging postinst (or run manually):"; \
-	    echo '  chown nobody:$$(id -gn nobody) /var/log/pping'; \
+	    echo '  chown nobody:$$(id -gn nobody) /var/log/pping2'; \
 	fi
 	@echo
-	@echo "Edit $(SYSCONFDIR)/default/pping (set PPING_IFACE), then:"
-	@echo "  sudo systemctl enable --now pping"
+	@echo "Edit $(SYSCONFDIR)/default/pping2 (set PPING_IFACE), then:"
+	@echo "  sudo systemctl enable --now pping2"
 
 install-clickhouse:
 	install -d $(DESTDIR)$(PREFIX)/bin
-	$(SUBST) contrib/clickhouse/pping-load.sh \
-	    > $(DESTDIR)$(PREFIX)/bin/pping-load.sh
-	chmod 0755 $(DESTDIR)$(PREFIX)/bin/pping-load.sh
+	$(SUBST) contrib/clickhouse/pping2-load.sh \
+	    > $(DESTDIR)$(PREFIX)/bin/pping2-load.sh
+	chmod 0755 $(DESTDIR)$(PREFIX)/bin/pping2-load.sh
 	install -d $(DESTDIR)$(SYSCONFDIR)/cron.d
-	$(SUBST) contrib/clickhouse/pping-load.cron \
-	    > $(DESTDIR)$(SYSCONFDIR)/cron.d/pping-load
-	chmod 0644 $(DESTDIR)$(SYSCONFDIR)/cron.d/pping-load
+	$(SUBST) contrib/clickhouse/pping2-load.cron \
+	    > $(DESTDIR)$(SYSCONFDIR)/cron.d/pping2-load
+	chmod 0644 $(DESTDIR)$(SYSCONFDIR)/cron.d/pping2-load
 	install -d $(DESTDIR)$(SHAREDIR)
 	install -m 0644 contrib/clickhouse/schema.sql \
 	    $(DESTDIR)$(SHAREDIR)/schema.sql
 	@echo
 	@echo "Schema is at $(SHAREDIR)/schema.sql. Apply it with:"
 	@echo "  clickhouse-client < $(SHAREDIR)/schema.sql"
-	@echo "Then set CH_ARGS in $(SYSCONFDIR)/default/pping."
+	@echo "Then set CH_ARGS in $(SYSCONFDIR)/default/pping2."
 
 install-all:
 ifneq ($(shell uname -s),Linux)
@@ -126,20 +122,19 @@ endif
 	$(MAKE) install-clickhouse
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/pping
+	rm -f $(DESTDIR)$(PREFIX)/bin/pping2
 
 uninstall-systemd:
-	rm -f $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping.service
+	rm -f $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2.service
 	if [ -z "$(DESTDIR)" ]; then systemctl daemon-reload; fi
-	# /etc/default/pping and /var/log/pping/ are intentionally left in place
-	# (config file and accumulated log data, respectively).
+	# /etc/default/pping2 and /var/log/pping2/ are intentionally left in place
 
 uninstall-clickhouse:
-	rm -f $(DESTDIR)$(PREFIX)/bin/pping-load.sh
-	rm -f $(DESTDIR)$(SYSCONFDIR)/cron.d/pping-load
+	rm -f $(DESTDIR)$(PREFIX)/bin/pping2-load.sh
+	rm -f $(DESTDIR)$(SYSCONFDIR)/cron.d/pping2-load
 	rm -f $(DESTDIR)$(SHAREDIR)/schema.sql
 	rmdir --ignore-fail-on-non-empty $(DESTDIR)$(SHAREDIR) 2>/dev/null || true
-	# /etc/default/pping and any *.load files are intentionally left in place
+	# /etc/default/pping2 and any *.load files are intentionally left in place
 
 uninstall-all: uninstall-clickhouse uninstall-systemd uninstall
 
