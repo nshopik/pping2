@@ -74,14 +74,14 @@ jobs:
         with:
           name: pping-${{ github.sha }}
 
-      - name: Make pping executable
-        run: chmod +x pping
+      - name: Prepare pping binary
+        # touch bumps mtime so `make` treats the downloaded artifact as
+        # up-to-date relative to the freshly-checked-out pping.cpp.
+        run: |
+          chmod +x pping
+          touch pping
 
-      - name: Build unit tests
-        run: make LIBTINS="$LIBTINS_PREFIX" test/unit_tests
-
-      - name: Run test suite
-        working-directory: test
+      - name: Run test suite via `make test`
         env:
           LD_LIBRARY_PATH: ${{ env.LIBTINS_PREFIX }}/lib
-        run: sh run_tests.sh
+        run: make LIBTINS="$LIBTINS_PREFIX" test

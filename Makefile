@@ -28,6 +28,8 @@ pping:  pping.cpp
 check: pping test/unit_tests
 	@cd test && sh run_tests.sh
 
+test: check
+
 test/unit_tests: test/unit_tests.cpp pping.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o test/unit_tests test/unit_tests.cpp $(LDFLAGS)
 
@@ -141,5 +143,6 @@ uninstall-clickhouse:
 
 uninstall-all: uninstall-clickhouse uninstall-systemd uninstall
 
+.PHONY: test check clean pcaps
 .PHONY: install install-systemd install-clickhouse install-all
 .PHONY: uninstall uninstall-systemd uninstall-clickhouse uninstall-all
