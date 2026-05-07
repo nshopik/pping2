@@ -312,8 +312,8 @@ REGISTER_TEST(test_flowrec_seq_field_defaults);
 
 static void test_capacity_defaults()
 {
-    ASSERT_EQ(maxFlows,  1048576);
-    ASSERT_EQ(maxTSvals, (size_t)268435456);
+    ASSERT_EQ(maxFlows,  1 << 26);              // 2^26 = 67M, per capacity-defaults-sizing
+    ASSERT_EQ(maxTSvals, size_t(1) << 25);       // 2^25 = 33.5M, per capacity-defaults-sizing
     ASSERT_EQ(flowMaxAge, 1800.);     // new: 30 min, middle ground for ClickHouse buckets
     ASSERT_EQ(aggregateOutput, false);
     ASSERT_EQ(flowsDropped,   0);
