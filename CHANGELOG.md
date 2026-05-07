@@ -40,10 +40,21 @@
 
 ### Changed
 
-- `maxFlows` default raised from 65535 to 1,048,576 (`1024^2`). Memory at
-  full cap ~170 MB combined; trivial on any host running ClickHouse.
-- `maxTSvals` default raised from 4,000,000 to 268,435,456 (`16^7`).
-  Worst-case ~74 GB IPv6; real workloads at 1 Mpps stay single-digit GB.
+- `maxFlows` default revised to `1 << 26` (67,108,864), sized for 10G IMIX TCP
+  on a single pping instance against worst-case ISP/consumer-edge flow density
+  (max(peak flowCnt) measured on MAWI samplepoint-F × 2× consumer-edge multiplier
+  × 2× safety, rounded up to next power of 2). RAM at full cap ~6.4 GB. Hosts
+  running near the cap will see `<n> flows dropped (cap)` in summary output;
+  recompile to raise. ≥ 25G deployments need RSS + N pping instances or an
+  XDP/AF_XDP capture path — single-instance pping is architecturally capped
+  near 10G regardless of this default.
+- `maxTSvals` default revised to `size_t(1) << 25` (33,554,432), down 8× from
+  the previous 256M. The previous default was over-allocated (74 GB IPv6
+  worst-case) due to a flawed flow-times-tickrate sub-model; the new packet-
+  bound formula (target_pps × ts_capable_fraction × tsvalMaxAge × 2× safety)
+  reflects the actual upper bound — `tsTbl` keys are `(flow, TSval)` with
+  `try_emplace` dedup, so entries ≤ packets-in-window. RAM at full cap
+  ~6.95 GB IPv4 / ~9.23 GB IPv6.
 - The per-rejection `flow limit (...) reached, dropping new flow:` stderr
   line is removed; rejections are counted in `flows dropped (cap),`.
 - **Default RTT measurement now uses hybrid TS+SEQ path** (`--mode hybrid`).
