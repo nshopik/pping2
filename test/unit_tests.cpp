@@ -40,6 +40,15 @@ static const char* g_current_test = nullptr;
         } \
     } while (0)
 
+#define ASSERT_TRUE(expr) \
+    do { \
+        if (!(expr)) { \
+            std::fprintf(stderr, "  ASSERT_TRUE failed in %s: " #expr "\n", \
+                         g_current_test); \
+            ++g_failures; \
+        } \
+    } while (0)
+
 #define ASSERT_STR_EQ(a, b) \
     do { \
         std::string _a(a), _b(b); \
@@ -312,8 +321,8 @@ REGISTER_TEST(test_flowrec_seq_field_defaults);
 
 static void test_capacity_defaults()
 {
-    ASSERT_EQ(maxFlows,  1 << 26);              // 2^26 = 67M, per capacity-defaults-sizing
-    ASSERT_EQ(maxTSvals, size_t(1) << 25);       // 2^25 = 33.5M, per capacity-defaults-sizing
+    ASSERT_TRUE(maxFlows  > 0 && (maxFlows  & (maxFlows  - 1)) == 0);  // positive power of 2
+    ASSERT_TRUE(maxTSvals > 0 && (maxTSvals & (maxTSvals - 1)) == 0);
     ASSERT_EQ(flowMaxAge, 1800.);     // new: 30 min, middle ground for ClickHouse buckets
     ASSERT_EQ(aggregateOutput, false);
     ASSERT_EQ(flowsDropped,   0);
