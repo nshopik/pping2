@@ -1,0 +1,10 @@
+Package: pping2
+Version: 0.0.0
+Architecture: amd64
+Maintainer: Nikolay Shopik <shopik@nvcube.net>
+Depends: libpcap0.8t64, libstdc++6
+Description: Passive TCP RTT measurement tool
+ pping2 measures TCP round-trip time by passively monitoring active
+ connections without injecting traffic. Includes SEQ/ACK measurement
+ for flows without TCP timestamp option, aggregated output for
+ ClickHouse ingest, and a systemd+cron operational stack.

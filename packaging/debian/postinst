@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        setcap cap_net_raw+ep /usr/bin/pping2
+
+        mkdir -p /var/log/pping2
+        chown nobody:$(id -gn nobody) /var/log/pping2
+
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+exit 0
