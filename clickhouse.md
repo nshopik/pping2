@@ -1,52 +1,52 @@
-# Sending pping output to ClickHouse
+# Sending pping2 output to ClickHouse
 
-This is the worked end-to-end example for the most common pping deployment:
+This is the worked end-to-end example for the most common pping2 deployment:
 capture on a host, batch-load aggregated rows into ClickHouse every minute.
 Everything below is automated by the Makefile install targets — you only edit
 one config file and run two commands.
 
 ## Quickstart
 
-On a Debian-flavored host with pping built and `clickhouse-client` available:
+On a Debian-flavored host with pping2 built and `clickhouse-client` available:
 
 ```sh
 sudo make install-all
-sudo $EDITOR /etc/default/pping        # set PPING_IFACE and CH_ARGS
-clickhouse-client < /usr/local/share/pping/schema.sql
-sudo systemctl enable --now pping
+sudo $EDITOR /etc/default/pping2        # set PPING_IFACE and CH_ARGS
+clickhouse-client < /usr/local/share/pping2/schema.sql
+sudo systemctl enable --now pping2
 ```
 
 That's the entire setup. Within a minute the cron loader picks up
-`/var/log/pping/pping.log` and inserts into the `pping_flows` table.
+`/var/log/pping2/pping2.log` and inserts into the `pping_flows` table.
 
 ## What got installed
 
 | Path | Source | Purpose |
 | --- | --- | --- |
-| `/usr/local/bin/pping` | binary | the daemon |
-| `/etc/systemd/system/pping.service` | `contrib/systemd/` | systemd unit; `ExecReload` sends SIGHUP for log rotation |
-| `/etc/default/pping` | `contrib/systemd/pping.default` | the **only** file you edit; sourced by both daemon and loader |
-| `/usr/local/bin/pping-load.sh` | `contrib/clickhouse/` | cron-driven batch loader |
-| `/etc/cron.d/pping-load` | `contrib/clickhouse/` | runs the loader every minute |
-| `/usr/local/share/pping/schema.sql` | `contrib/clickhouse/` | reference schema (apply manually) |
-| `/var/log/pping/` | `make install-systemd` | log dir, owned by `nobody` so the daemon can recreate the file on SIGHUP |
+| `/usr/local/bin/pping2` | binary | the daemon |
+| `/etc/systemd/system/pping2.service` | `contrib/systemd/` | systemd unit; `ExecReload` sends SIGHUP for log rotation |
+| `/etc/default/pping2` | `contrib/systemd/pping2.default` | the **only** file you edit; sourced by both daemon and loader |
+| `/usr/local/bin/pping2-load.sh` | `contrib/clickhouse/` | cron-driven batch loader |
+| `/etc/cron.d/pping2-load` | `contrib/clickhouse/` | runs the loader every minute |
+| `/usr/local/share/pping2/schema.sql` | `contrib/clickhouse/` | reference schema (apply manually) |
+| `/var/log/pping2/` | `make install-systemd` | log dir, owned by `nobody` so the daemon can recreate the file on SIGHUP |
 
-`make uninstall-all` removes everything except `/etc/default/pping` (your
-edited config) and `/var/log/pping/pping.log` (your data).
+`make uninstall-all` removes everything except `/etc/default/pping2` (your
+edited config) and `/var/log/pping2/pping2.log` (your data).
 
-## Configuring `/etc/default/pping`
+## Configuring `/etc/default/pping2`
 
 Three settings you must touch, two you might:
 
 ```sh
 PPING_IFACE=eth0                       # required; single interface only
 PPING_FLAGS=-a                         # default: aggregate mode (recommended)
-PPING_LOGFILE=/var/log/pping/pping.log # default; dir must be writable by `nobody`
+PPING_LOGFILE=/var/log/pping2/pping2.log # default; dir must be writable by `nobody`
 PPING_TABLE=pping_flows                # default; only change if you renamed
 PPING_INGEST=clickhouse-client         # or 'curl' — see below
 
 # clickhouse-client mode:
-CH_ARGS="--host ch.internal --user pping --password=hunter2 --database metrics"
+CH_ARGS="--host ch.internal --user pping2 --password=hunter2 --database metrics"
 
 # curl mode (alternative):
 # CH_URL=https://ch.internal:8443
@@ -77,14 +77,14 @@ like `--cacert` or `--max-time`.
 
 Both modes use the same loader cron entry, the same `mv` + `systemctl reload`
 rotation, and the same `.load` file retry semantics on failure. Switch by
-editing `/etc/default/pping`; no service restart required (the loader
+editing `/etc/default/pping2`; no service restart required (the loader
 re-reads the env file every minute).
 
 ## How rotation works
 
-`pping-load.sh` rotates by `mv` — atomic at the dirent level, so pping's
+`pping2-load.sh` rotates by `mv` — atomic at the dirent level, so pping2's
 open fd stays valid on the renamed inode and no rows are lost. `systemctl
-reload` then sends SIGHUP; pping reopens its `--logfile` path on the next
+reload` then sends SIGHUP; pping2 reopens its `--logfile` path on the next
 packet-loop tick, capped at libtins's 250ms pcap timeout. On ingest failure
 the `.load` file persists; the next minute's run sees it at the top and
 exits, preserving data until ClickHouse is reachable again.
@@ -96,7 +96,7 @@ exits, preserving data until ClickHouse is reachable again.
   See README's "Output formats" for the full `-a` semantics.
 - The cron loader runs every minute. If ClickHouse is unreachable, the
   `.load` stays on disk and the next minute's run keeps appending to a fresh
-  `pping.log` — no data loss, just a bigger batch on the next success.
+  `pping2.log` — no data loss, just a bigger batch on the next success.
 - The shipped table TTL is 30 days
   (`TTL toDateTime(timestamp) + toIntervalDay(30)`). Adjust to taste.
 
@@ -138,10 +138,10 @@ If you already operate [Vector](https://vector.dev/), you can drop the cron
 loader entirely:
 
 ```sh
-sudo /usr/local/bin/pping $PPING_FLAGS -i $PPING_IFACE | vector --config vector.toml
+sudo /usr/local/bin/pping2 $PPING_FLAGS -i $PPING_IFACE | vector --config vector.toml
 ```
 
-Configure a `stdin` source → `regex_parser` transform (one regex per pping
+Configure a `stdin` source → `regex_parser` transform (one regex per pping2
 output field) → `clickhouse` sink. Vector handles buffering, retries, and
 backpressure on its own. Not recommended over the cron path for a fresh
 deployment — it's only worth it if Vector is already part of your stack.

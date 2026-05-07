@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+pping2 is a fork of [Pollere's pping](https://github.com/pollere/pping),
+started at upstream commit
+[`6cc6a604`](https://github.com/pollere/pping/commit/6cc6a604916d29415bd2c8f51f8be8900f6c83c8).
+This is the first versioned release of the fork.
+
+## v1.0.0 — 2026-05-07
 
 ### Added
 

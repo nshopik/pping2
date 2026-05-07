@@ -1,65 +1,67 @@
-# pping (improved fork)
+# pping2
 
-Maintained fork of [Pollere's passive ping](https://github.com/pollere/pping)
-with significant additions for performance, broader workload support, and
-operational ergonomics.
-
-_pping_ measures TCP round-trip time by passively monitoring active
+_pping2_ measures TCP round-trip time by passively monitoring active
 connections — it doesn't inject traffic. It works on Linux, macOS, and BSD,
-and (new in this fork) handles flows from clients that omit the TCP timestamp
-option (Windows, middleboxes that strip it). Unlike per-endpoint tools like
-`ss`, pping can measure RTT at the sender, receiver, or anywhere on a
-connection's path — for example, an OpenWrt border router can monitor RTT
-of all traffic to and from the Internet.
+and handles flows from clients that omit the TCP timestamp option (Windows,
+middleboxes that strip it). Unlike per-endpoint tools like `ss`, pping2 can
+measure RTT at the sender, receiver, or anywhere on a connection's path —
+for example, an OpenWrt border router can monitor RTT of all traffic to and
+from the Internet.
 
-For background on the original project, see <http://pollere.net/pping.html>.
-For an XDP/eBPF-based ISP-scale variant, see [thebracket/cpumap-pping](https://github.com/thebracket/cpumap-pping).
+## Key features
 
-## What's changed from upstream
+- **Hybrid RTT measurement** — SEQ/ACK path covers flows without TCP timestamps
+  (Windows, stripped-TS middleboxes); `--mode hybrid` is the default.
+- **Aggregated output** (`-a`) — one row per flow per window, built for direct
+  ClickHouse ingest.
+- **~2× throughput over upstream** — packed POD hot path, allocation-free IP
+  formatting, localtime caching.
 
-- **SEQ/ACK measurement path** — measures RTT on flows without the TCP timestamp
-  option (Windows, stripped-TS middleboxes). Selectable via
-  `--mode {ts,seq,hybrid}`; `hybrid` is the new default.
-- **Packed POD `FlowKey` hot path** — replaces the original string-keyed
-  hashmaps; meaningfully reduces per-packet CPU on large flow counts.
-- **Extended machine-readable output** (`-e`) — adds byte counters, separate
-  source/dest port columns, capture-node FQDN, and the `t`/`s` path tag.
-  Designed for direct ingestion into ClickHouse or similar.
-- **Aggregated output mode** (`-a`/`--aggregate`) — one row per flow per
-  closure or window instead of one row per RTT match. Substantially lower
-  ClickHouse ingest cost on busy capture points; emit-on-close, emit-on-idle,
-  emit-on-age-cap, and shutdown-flush triggers. New knob `--flowMaxAge`
-  controls the per-flow rolling window (default 1800s).
-- **Higher default capacity** — `maxFlows` raised from 65535 to 1,048,576;
-  `maxTSvals` raised from 4M to 256M. The per-rejection stderr line is
-  replaced by a counter in the periodic summary line.
-- **`--logfile=PATH` flag** with SIGHUP-driven reopen — pping opens the
-  path append+create at startup and reopens on SIGHUP. Enables zero-copy
-  atomic log rotation by external tools (`mv` + `kill -HUP $pid`), used
-  by the bundled cron loader to ingest into ClickHouse.
-- **Privilege drop + compile hardening** — opens the packet socket as root,
-  then drops to `nobody` before parsing untrusted bytes.
-  `-fstack-protector-strong`, `-D_FORTIFY_SOURCE=2`, full RELRO, NX stack.
-- **CI on every push** (GitHub Actions + GitLab CI) with a real test suite:
-  unit tests, an integration pcap, format regression, and 9 SEQ/ACK golden
-  files covering 3 fixtures × 3 modes.
-- **Wall-clock benchmark line** in `-r` mode for throughput regression
-  detection (`ns/pkt` and `Mpps`).
-- Smaller fixes: SIGINT/SIGTERM flush the summary on exit, no-throw
-  TSopt parse (removes a hot-path exception unwind), tuned flush cadence
-  for live-capture machine-readable output.
+See [`CHANGELOG.md`](CHANGELOG.md) for the full list of changes.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the full list.
+## Install
+
+### Debian / Ubuntu (recommended)
+
+Download the `.deb` for your distro from the
+[Releases](https://github.com/nshopik/pping2/releases) page, then:
+
+```sh
+sudo dpkg -i pping2_<version>_<distro>_<arch>.deb
+```
+
+`postinst` sets `cap_net_raw` on the binary and creates `/var/log/pping2/`
+owned by `nobody`. Edit `/etc/default/pping2` to set your interface, then:
+
+```sh
+sudo systemctl enable --now pping2
+```
+
+### From a binary tarball
+
+Download `pping2-<version>-linux-<arch>.tar.gz` (or the macOS variant) from
+[Releases](https://github.com/nshopik/pping2/releases), extract, then:
+
+```sh
+tar xzf pping2-<version>-linux-amd64.tar.gz
+cd pping2-<version>-linux-amd64
+sudo make install              # binary + setcap
+sudo make install-all          # binary + systemd + ClickHouse loader (Linux)
+```
+
+### From source
+
+See **Compiling** below.
 
 ## Compiling
 
 ### Prerequisites
 
-pping depends on the [libtins](http://libtins.github.io/) packet parsing
+pping2 depends on the [libtins](http://libtins.github.io/) packet parsing
 library, which should be [downloaded](http://libtins.github.io/download/) and
 built or installed first.
 
-pping uses only the core functions of libtins, so a static version with fewer
+pping2 uses only the core functions of libtins, so a static version with fewer
 dependencies (only _cmake_ and _libpcap_) can be built and 'installed' in its
 own source directory:
 
@@ -77,12 +79,12 @@ make
 make install
 ```
 
-(The static libtins library makes the pping binary more self-contained
+(The static libtins library makes the pping2 binary more self-contained
 so it will run on systems that don't have libtins installed.)
 
 ## Building
 
-The pping makefile assumes libtins has been built and installed in `~/src/libtins`
+The pping2 makefile assumes libtins has been built and installed in `~/src/libtins`
 as described above. If that isn't the case, override on the command line:
 
 ```Shell
@@ -95,7 +97,7 @@ The Makefile ships three install targets and an umbrella:
 
 ```Shell
 sudo make install              # binary + setcap cap_net_raw+ep on Linux
-sudo make install-systemd      # +pping.service, /etc/default/pping
+sudo make install-systemd      # +pping2.service, /etc/default/pping2
 sudo make install-clickhouse   # +cron loader, +schema.sql for the pping_flows table
 sudo make install-all          # all three (Linux only)
 ```
@@ -107,7 +109,7 @@ paths rewritten at install time, so `make install-all PREFIX=/usr` produces
 a coherent install (no hardcoded `/usr/local` references in the cron, unit,
 loader).
 
-For the worked end-to-end example (pping → cron loader → ClickHouse), see
+For the worked end-to-end example (pping2 → cron loader → ClickHouse), see
 [`clickhouse.md`](clickhouse.md).
 
 ### Running without installing
@@ -115,37 +117,37 @@ For the worked end-to-end example (pping → cron loader → ClickHouse), see
 If you'd rather not install, two ad-hoc options work:
 
 ```Shell
-sudo ./pping -i eth0                          # run as root
-sudo setcap cap_net_raw+ep ./pping            # grant capability once
-./pping -i eth0                               #   then run as your user
+sudo ./pping2 -i eth0                          # run as root
+sudo setcap cap_net_raw+ep ./pping2            # grant capability once
+./pping2 -i eth0                               #   then run as your user
 ```
 
-The `setcap` form is preferred — pping drops privileges to `nobody` after
+The `setcap` form is preferred — pping2 drops privileges to `nobody` after
 opening the socket, but starting unprivileged is simpler.
 
 ## Examples
 
-`pping -i <interface>` monitors TCP traffic on the given interface and reports
+`pping2 -i <interface>` monitors TCP traffic on the given interface and reports
 each packet's RTT to stdout:
 
 ```Shell
-pping -i en0          # macOS
-pping -i wlp2s0       # Linux
+pping2 -i en0          # macOS
+pping2 -i wlp2s0       # Linux
 ```
 
-`pping -r <pcapfile>` prints the RTT of TCP packets from a pcap captured with
+`pping2 -r <pcapfile>` prints the RTT of TCP packets from a pcap captured with
 `tcpdump` or Wireshark.
 
 A few flags control capture duration, output format, and BPF filter. For
 example, to see the RTT of the next 100 TCP packets to/from Netflix or YouTube:
 
 ```Shell
-pping -i en0 -c 100 -f 'net 45.57 or 74.125'
+pping2 -i en0 -c 100 -f 'net 45.57 or 74.125'
 ```
 
-`pping -h`, `pping --help`, or just `pping` describes all flags.
+`pping2 -h`, `pping2 --help`, or just `pping2` describes all flags.
 
-pping outputs one line per RTT measurement. On a busy interface, redirect to
+pping2 outputs one line per RTT measurement. On a busy interface, redirect to
 a file or pipe to a summarization or plotting utility. The exact format is
 selected by `-m` (compact) or `-e` (extended); see below.
 
@@ -204,14 +206,14 @@ Triggers: FIN (this direction's flow), RST (both directions), idle expiry
 exclusive with `-e` and `-m`.
 
 ```Shell
-./pping -a -r capture.pcap                     # aggregated; default age-cap = 1800s
-./pping -a --flowMaxAge=900 -r capture.pcap    # 15-min windows for investigation
-./pping -a --flowMaxAge=0   -r capture.pcap    # cap disabled — emit on close/idle only
+./pping2 -a -r capture.pcap                     # aggregated; default age-cap = 1800s
+./pping2 -a --flowMaxAge=900 -r capture.pcap    # 15-min windows for investigation
+./pping2 -a --flowMaxAge=0   -r capture.pcap    # cap disabled — emit on close/idle only
 ```
 
 ## Measurement modes
 
-pping has two RTT measurement paths and a hybrid that combines them:
+pping2 has two RTT measurement paths and a hybrid that combines them:
 
 - **TS path** (TCP timestamp option, RFC 7323): the original method. Works on
   Linux/BSD/macOS. Flows without timestamps (Windows, stripped-TS middleboxes)
@@ -224,9 +226,9 @@ pping has two RTT measurement paths and a hybrid that combines them:
 Select with `--mode {ts,seq,hybrid}` (default: `hybrid`).
 
 ```Shell
-./pping --mode ts     -r capture.pcap   # legacy TS-only
-./pping --mode seq    -r capture.pcap   # SEQ on every flow (ignores TSopt)
-./pping --mode hybrid -r capture.pcap   # TS where available, SEQ otherwise
+./pping2 --mode ts     -r capture.pcap   # legacy TS-only
+./pping2 --mode seq    -r capture.pcap   # SEQ on every flow (ignores TSopt)
+./pping2 --mode hybrid -r capture.pcap   # TS where available, SEQ otherwise
 ```
 
 Which path produced a sample is shown in the output (see Output formats above):
@@ -243,7 +245,7 @@ path and are not counted.
 ## Benchmarking
 
 ```Shell
-./pping -m -r bench.pcap > /dev/null
+./pping2 -m -r bench.pcap > /dev/null
 ```
 
 prints a wall-clock summary line to stderr:
@@ -257,3 +259,7 @@ Live capture (`-i`) does not print this line.
 ## Releases
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
+
+---
+
+_pping2 is a fork of [Pollere's pping](https://github.com/pollere/pping)._
