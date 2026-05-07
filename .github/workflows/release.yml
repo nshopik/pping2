@@ -1,0 +1,253 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  LIBTINS_VERSION: v4.5
+
+jobs:
+  # Debian 12 and 13 builds run inside distro containers for ABI accuracy.
+  # Steps run as root inside the container — no sudo needed.
+  build-debian:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian12
+            image: debian:bookworm
+            runner: ubuntu-24.04
+            arch: amd64
+            tarball: true
+          - distro: debian12
+            image: debian:bookworm
+            runner: ubuntu-24.04-arm
+            arch: arm64
+            tarball: true
+          - distro: debian13
+            image: debian:trixie
+            runner: ubuntu-24.04
+            arch: amd64
+            tarball: false
+          - distro: debian13
+            image: debian:trixie
+            runner: ubuntu-24.04-arm
+            arch: arm64
+            tarball: false
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            build-essential cmake libpcap-dev libssl-dev \
+            pkg-config git ca-certificates dpkg-dev libcap2-bin
+
+      - name: Set version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache libtins
+        id: cache-libtins
+        uses: actions/cache@v4
+        with:
+          path: .libtins
+          key: libtins-${{ env.LIBTINS_VERSION }}-${{ matrix.distro }}-${{ matrix.arch }}
+
+      - name: Build libtins
+        if: steps.cache-libtins.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 --branch "$LIBTINS_VERSION" \
+            https://github.com/mfontanini/libtins.git /tmp/libtins-src
+          cmake -S /tmp/libtins-src -B /tmp/libtins-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIBTINS_ENABLE_PCAP=1 \
+            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/.libtins"
+          cmake --build /tmp/libtins-build --parallel "$(nproc)"
+          cmake --install /tmp/libtins-build
+
+      - name: Build pping2
+        run: make LIBTINS="${GITHUB_WORKSPACE}/.libtins"
+
+      - name: Stage install
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          PKGDIR=$(mktemp -d)
+          make install-all DESTDIR="$PKGDIR" PREFIX=/usr SYSCONFDIR=/etc
+          mkdir "$PKGDIR/DEBIAN"
+          sed \
+            -e "s/^Version: .*/Version: ${VERSION}/" \
+            -e "s/^Architecture: .*/Architecture: ${ARCH}/" \
+            packaging/debian/control > "$PKGDIR/DEBIAN/control"
+          install -m 0755 packaging/debian/postinst "$PKGDIR/DEBIAN/postinst"
+          install -m 0755 packaging/debian/prerm    "$PKGDIR/DEBIAN/prerm"
+          cp packaging/debian/conffiles             "$PKGDIR/DEBIAN/conffiles"
+          dpkg-deb --build "$PKGDIR" \
+            "pping2_${VERSION}_${{ matrix.distro }}_${ARCH}.deb"
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.distro }}-${{ matrix.arch }}
+          path: pping2_*.deb
+
+      - name: Build tarball
+        if: matrix.tarball
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          STAGING="pping2-${VERSION}-linux-${ARCH}"
+          mkdir "$STAGING"
+          cp pping2 Makefile README.md clickhouse.md LICENSE "$STAGING/"
+          cp -r contrib "$STAGING/"
+          tar czf "pping2-${VERSION}-linux-${ARCH}.tar.gz" "$STAGING"
+
+      - name: Upload tarball
+        if: matrix.tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-linux-${{ matrix.arch }}
+          path: pping2-*-linux-*.tar.gz
+
+  # Ubuntu 24.04 builds run natively (no container). Uses sudo.
+  build-ubuntu:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake libpcap-dev libssl-dev \
+            pkg-config git ca-certificates dpkg-dev libcap2-bin
+
+      - name: Set version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache libtins
+        id: cache-libtins
+        uses: actions/cache@v4
+        with:
+          path: .libtins
+          key: libtins-${{ env.LIBTINS_VERSION }}-ubuntu2404-${{ matrix.arch }}
+
+      - name: Build libtins
+        if: steps.cache-libtins.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth=1 --branch "$LIBTINS_VERSION" \
+            https://github.com/mfontanini/libtins.git /tmp/libtins-src
+          cmake -S /tmp/libtins-src -B /tmp/libtins-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIBTINS_ENABLE_PCAP=1 \
+            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/.libtins"
+          cmake --build /tmp/libtins-build --parallel "$(nproc)"
+          cmake --install /tmp/libtins-build
+
+      - name: Build pping2
+        run: make LIBTINS="${GITHUB_WORKSPACE}/.libtins"
+
+      - name: Stage install and build .deb
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          PKGDIR=$(mktemp -d)
+          make install-all DESTDIR="$PKGDIR" PREFIX=/usr SYSCONFDIR=/etc
+          mkdir "$PKGDIR/DEBIAN"
+          sed \
+            -e "s/^Version: .*/Version: ${VERSION}/" \
+            -e "s/^Architecture: .*/Architecture: ${ARCH}/" \
+            packaging/debian/control > "$PKGDIR/DEBIAN/control"
+          install -m 0755 packaging/debian/postinst "$PKGDIR/DEBIAN/postinst"
+          install -m 0755 packaging/debian/prerm    "$PKGDIR/DEBIAN/prerm"
+          cp packaging/debian/conffiles             "$PKGDIR/DEBIAN/conffiles"
+          dpkg-deb --build "$PKGDIR" \
+            "pping2_${VERSION}_ubuntu2404_${ARCH}.deb"
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-ubuntu2404-${{ matrix.arch }}
+          path: pping2_*.deb
+
+  # macOS builds produce tar.gz only (no systemd/cron on macOS).
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: amd64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libtins
+        run: brew install libtins
+
+      - name: Set version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build pping2
+        run: make LIBTINS="$(brew --prefix libtins)"
+
+      - name: Build tarball
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          STAGING="pping2-${VERSION}-macos-${ARCH}"
+          mkdir "$STAGING"
+          cp pping2 Makefile README.md clickhouse.md LICENSE "$STAGING/"
+          cp -r contrib "$STAGING/"
+          tar czf "pping2-${VERSION}-macos-${ARCH}.tar.gz" "$STAGING"
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-macos-${{ matrix.arch }}
+          path: pping2-*-macos-*.tar.gz
+
+  # publish blocks on all build legs — a failing build prevents any release.
+  publish:
+    needs: [build-debian, build-ubuntu, build-macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --generate-notes \
+            pping2_*.deb \
+            pping2-*-linux-*.tar.gz \
+            pping2-*-macos-*.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
