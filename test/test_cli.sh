@@ -2,7 +2,7 @@
 # test_cli.sh — CLI surface tests for the aggregator flags.
 # POSIX sh.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-PPING="$SCRIPT_DIR/../pping"
+PPING="$SCRIPT_DIR/../pping2"
 PCAP="$SCRIPT_DIR/known.pcap"
 
 PASS=0

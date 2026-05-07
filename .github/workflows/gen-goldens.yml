@@ -38,7 +38,7 @@ jobs:
           cmake --build /tmp/libtins-build --parallel "$(nproc)"
           cmake --install /tmp/libtins-build
 
-      - name: Build pping
+      - name: Build pping2
         run: make LIBTINS="$LIBTINS_PREFIX"
 
       - name: Generate goldens
@@ -48,7 +48,7 @@ jobs:
           mkdir -p test/golden
           for p in dns-tcp-linux dns-tcp-windows mixed-with-retx; do
             for m in ts seq hybrid; do
-              ./pping -e --mode "$m" -r "test/pcaps/$p.pcap" > "test/golden/$p.$m.golden" 2>/dev/null
+              ./pping2 -e --mode "$m" -r "test/pcaps/$p.pcap" > "test/golden/$p.$m.golden" 2>/dev/null
               echo "Generated $p.$m.golden ($(wc -l < test/golden/$p.$m.golden) lines)"
             done
           done

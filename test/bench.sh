@@ -3,7 +3,7 @@
 # pping's wall-clock summary is the source of these numbers; this script
 # just runs the matrix and tabulates.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-PPING="$SCRIPT_DIR/../pping"
+PPING="$SCRIPT_DIR/../pping2"
 PCAPS_DIR="$SCRIPT_DIR/pcaps"
 
 if [ ! -x "$PPING" ]; then

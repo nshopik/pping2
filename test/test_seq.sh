@@ -2,7 +2,7 @@
 # test_seq.sh — diff -e --mode <m> output against goldens for SEQ/ACK feature.
 # POSIX sh.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-PPING="$SCRIPT_DIR/../pping"
+PPING="$SCRIPT_DIR/../pping2"
 PCAPS_DIR="$SCRIPT_DIR/pcaps"
 GOLDEN_DIR="$SCRIPT_DIR/golden"
 

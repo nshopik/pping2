@@ -3,7 +3,7 @@
 # pcap fixtures, plus invariants and synth-fixture checks.
 # POSIX sh.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-PPING="$SCRIPT_DIR/../pping"
+PPING="$SCRIPT_DIR/../pping2"
 PCAPS_DIR="$SCRIPT_DIR/pcaps"
 GOLDEN_DIR="$SCRIPT_DIR/golden"
 

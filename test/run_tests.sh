@@ -1,5 +1,5 @@
 #!/bin/sh
-# run_tests.sh — master test runner for pping
+# run_tests.sh — master test runner for pping2
 #
 # Usage:
 #   cd test && sh run_tests.sh

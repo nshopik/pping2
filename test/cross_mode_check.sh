@@ -3,7 +3,7 @@
 # --mode ts and --mode hybrid (modulo the tag column, which is 't' in both).
 # POSIX sh.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-PPING="$SCRIPT_DIR/../pping"
+PPING="$SCRIPT_DIR/../pping2"
 PCAP="$SCRIPT_DIR/pcaps/dns-tcp-linux.pcap"
 
 if [ ! -x "$PPING" ]; then

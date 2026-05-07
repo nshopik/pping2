@@ -41,14 +41,14 @@ jobs:
           cmake --build /tmp/libtins-build --parallel "$(nproc)"
           cmake --install /tmp/libtins-build
 
-      - name: Build pping
+      - name: Build pping2
         run: make LIBTINS="$LIBTINS_PREFIX"
 
-      - name: Upload pping binary
+      - name: Upload pping2 binary
         uses: actions/upload-artifact@v4
         with:
-          name: pping-${{ github.sha }}
-          path: pping
+          name: pping2-${{ github.sha }}
+          path: pping2
           retention-days: 7
 
   test:
@@ -69,17 +69,17 @@ jobs:
           path: .libtins
           key: libtins-${{ env.LIBTINS_VERSION }}-ubuntu-24.04
 
-      - name: Download pping binary
+      - name: Download pping2 binary
         uses: actions/download-artifact@v4
         with:
-          name: pping-${{ github.sha }}
+          name: pping2-${{ github.sha }}
 
-      - name: Prepare pping binary
+      - name: Make pping2 executable
         # touch bumps mtime so `make` treats the downloaded artifact as
         # up-to-date relative to the freshly-checked-out pping.cpp.
         run: |
-          chmod +x pping
-          touch pping
+          chmod +x pping2
+          touch pping2
 
       - name: Run test suite via `make test`
         env:

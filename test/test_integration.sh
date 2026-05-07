@@ -6,7 +6,7 @@
 
 # Resolve the directory this script lives in so it can be called from anywhere.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-PPING="$SCRIPT_DIR/../pping"
+PPING="$SCRIPT_DIR/../pping2"
 PCAP="$SCRIPT_DIR/known.pcap"
 GOLDEN="$SCRIPT_DIR/known.pcap.golden"
 
