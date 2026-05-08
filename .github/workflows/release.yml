@@ -189,13 +189,12 @@ jobs:
           path: pping2_*.deb
 
   # macOS builds produce tar.gz only (no systemd/cron on macOS).
+  # Intel (amd64) dropped — macos-13 runners are unreliable and Intel Macs are 6+ years old.
   build-macos:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-13
-            arch: amd64
           - runner: macos-15
             arch: arm64
     runs-on: ${{ matrix.runner }}
