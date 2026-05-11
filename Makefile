@@ -36,6 +36,10 @@ test/unit_tests: test/unit_tests.cpp pping.cpp
 clean:
 	rm -f pping2 test/unit_tests
 
+bench: pping2
+	@mkdir -p docs/superpowers/baselines
+	@./test/bench.sh | tee "docs/superpowers/baselines/$$(date -u +%Y-%m-%d)-bench-$$(git rev-parse --short HEAD).txt"
+
 # Regenerate test fixtures from test/synth/. Requires scapy.
 pcaps:
 	cd test && python3 -m synth.build
@@ -142,6 +146,6 @@ uninstall-clickhouse:
 
 uninstall-all: uninstall-clickhouse uninstall-systemd uninstall
 
-.PHONY: test check clean pcaps
+.PHONY: test check clean pcaps bench
 .PHONY: install install-systemd install-clickhouse install-all
 .PHONY: uninstall uninstall-systemd uninstall-clickhouse uninstall-all
