@@ -6,7 +6,17 @@ case "$1" in
         setcap cap_net_raw+ep /usr/bin/pping2
 
         mkdir -p /var/log/pping2
-        chown nobody:$(id -gn nobody) /var/log/pping2
+        chown "nobody:$(id -gn nobody)" /var/log/pping2
+
+        # /etc/default/pping2 may hold ClickHouse credentials in CH_AUTH or
+        # CH_ARGS. Older pping2 packages shipped this conffile as 0644, and
+        # dpkg preserves the on-disk mode across upgrades. Strip "other"
+        # bits so credentials added by the admin aren't world-readable.
+        # `o-rwx` never grants permission, so admin tightenings (0600) are
+        # preserved untouched.
+        if [ -e /etc/default/pping2 ]; then
+            chmod o-rwx /etc/default/pping2 2>/dev/null || true
+        fi
 
         if [ -d /run/systemd/system ]; then
             systemctl daemon-reload >/dev/null 2>&1 || true

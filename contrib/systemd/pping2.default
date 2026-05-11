@@ -3,6 +3,12 @@
 # Use simple KEY=value lines only — arbitrary shell here can break the loader
 # under `set -euo pipefail`.
 # Edit this file then run: sudo systemctl restart pping2
+#
+# Credentials warning: if you set CH_AUTH or put a password inside CH_ARGS,
+# this file must NOT be world-readable. The pping2 .deb installs it as
+# 0640 root:root and the postinst chmod o-rwx's it on upgrade. If you
+# copied it manually, run:
+#     sudo chmod 0640 /etc/default/pping2
 
 # Network interface to monitor (required). Single interface only — multi-
 # interface support will land alongside per-row interface attribution in a
