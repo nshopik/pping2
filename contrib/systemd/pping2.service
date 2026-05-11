@@ -18,5 +18,23 @@ Restart=always
 RestartSec=5
 SuccessExitStatus=143
 
+# Run as nobody from the start. pping2 used to launch as root and call
+# dropPrivileges() after opening its packet socket; that path is still
+# the fallback for manual `sudo ./pping2 -i eth0` invocations, but under
+# systemd we hand it cap_net_raw directly via AmbientCapabilities, skip
+# the root window, and shrink the blast radius of any libtins parse-time
+# bug to whatever nobody can touch.
+User=nobody
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=true
+
+# Filesystem sandbox. pping2 only ever writes to /var/log/pping2 (the
+# --logfile destination); everything else stays read-only or hidden.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/pping2
+
 [Install]
 WantedBy=multi-user.target

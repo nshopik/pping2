@@ -182,6 +182,34 @@ jobs:
           [ "$ownr" = "nobody" ] || { echo "FAIL: /var/log/pping2 owner=$ownr (want nobody)"; exit 1; }
           echo "OK /var/log/pping2 owner=$ownr"
 
+      - name: Verify pping2.service hardening directives
+        # Greps the installed unit file directly (decoupled from how
+        # systemctl-show renders bitmasks across versions), then asks
+        # systemd to resolve the unit so we know it actually parses.
+        run: |
+          set -eu
+          systemctl cat pping2.service | tee /tmp/pping2.unit
+          for prop in 'User=nobody' \
+                      'AmbientCapabilities=CAP_NET_RAW' \
+                      'CapabilityBoundingSet=CAP_NET_RAW' \
+                      'NoNewPrivileges=true' \
+                      'ProtectSystem=strict' \
+                      'ProtectHome=true' \
+                      'PrivateTmp=true' \
+                      'ReadWritePaths=/var/log/pping2'; do
+              grep -qE "^${prop}\$" /tmp/pping2.unit \
+                  || { echo "FAIL: pping2.service missing ${prop}"; exit 1; }
+              echo "OK pping2.service ${prop}"
+          done
+          # systemctl-show resolves the unit (parses + applies all defaults);
+          # this is the round-trip that catches "directive name is misspelled
+          # so systemd ignored it" — `cat` would still show the typo while
+          # `show` would report the default value.
+          resolved_user=$(systemctl show pping2.service --property=User --value)
+          [ "$resolved_user" = "nobody" ] \
+              || { echo "FAIL: systemd resolved User=$resolved_user (want nobody)"; exit 1; }
+          echo "OK systemd resolved pping2.service User=$resolved_user"
+
       - name: Remove .deb (clean exit)
         if: always()
         run: sudo dpkg --remove pping2 || true
