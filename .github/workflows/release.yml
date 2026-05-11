@@ -241,12 +241,21 @@ jobs:
           merge-multiple: true
 
       - name: Create GitHub Release
+        # github.ref_name is the tag (e.g. v1.0.0). Tags can legally contain
+        # shell metacharacters — git-check-ref-format accepts `"`, `;`,
+        # `$(...)`, `|`, backtick, `&`. ${{ ... }} substitution happens
+        # before the shell parses the command, so a tag with those chars
+        # would inject code at this step (which runs with `contents: write`
+        # and an active GH_TOKEN). Bind the tag to a step-level env var so
+        # the shell only ever sees "$TAG" as a quoted string. Same applies
+        # to GITHUB_REPOSITORY (auto-provided by Actions; safe expansion).
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --repo "${{ github.repository }}" \
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             --generate-notes \
             pping2_*.deb \
             pping2-*-linux-*.tar.gz \
             pping2-*-macos-*.tar.gz
-        env:
-          GH_TOKEN: ${{ github.token }}

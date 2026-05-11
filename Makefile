@@ -73,9 +73,13 @@ install-systemd:
 	    > $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2.service
 	chmod 0644 $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2.service
 	install -d $(DESTDIR)$(SYSCONFDIR)/default
+	# 0640: this file holds the ClickHouse loader's CH_AUTH / CH_ARGS,
+	# which may contain credentials. World-readable would leak them to
+	# every local user. The Debian postinst also `chmod o-rwx`es it on
+	# upgrade so installs that came from pre-hardening packages get fixed.
 	if [ ! -e $(DESTDIR)$(SYSCONFDIR)/default/pping2 ] \
 	   && [ ! -L $(DESTDIR)$(SYSCONFDIR)/default/pping2 ]; then \
-	    install -m 0644 contrib/systemd/pping2.default \
+	    install -m 0640 contrib/systemd/pping2.default \
 	        $(DESTDIR)$(SYSCONFDIR)/default/pping2; \
 	fi
 	# pping2 drops to `nobody` after opening the packet socket, so it

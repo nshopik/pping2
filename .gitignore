@@ -8,6 +8,7 @@ test/unit_tests
 CLAUDE.md
 .claude/
 docs/superpowers/
+.gstack/
 
 # Python cache from test/synth/
 __pycache__/

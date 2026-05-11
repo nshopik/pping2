@@ -85,3 +85,103 @@ jobs:
         env:
           LD_LIBRARY_PATH: ${{ env.LIBTINS_PREFIX }}/lib
         run: make LIBTINS="$LIBTINS_PREFIX" test
+
+  # Verify the Debian packaging end-to-end: stage install, assert file modes
+  # and paths, build a .deb, install it, and check the postinst's runtime
+  # effects (setcap, /etc/default/pping2 mode, /var/log/pping2 ownership).
+  # Independent of the C++ build — uses a fake (empty) pping2 binary so
+  # this catches packaging regressions on every PR without waiting for
+  # libtins to compile.
+  package-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install packaging deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            dpkg-dev libcap2-bin shellcheck
+
+      - name: shellcheck Debian maintainer scripts
+        run: |
+          shellcheck packaging/debian/postinst
+          shellcheck packaging/debian/prerm
+
+      - name: Stage install with a fake pping2 binary
+        run: |
+          : > pping2
+          chmod +x pping2
+          STAGE=$(mktemp -d)
+          echo "STAGE=$STAGE" >> "$GITHUB_ENV"
+          make install-all DESTDIR="$STAGE" PREFIX=/usr SYSCONFDIR=/etc
+
+      - name: Assert staged-tree modes and paths
+        run: |
+          set -eu
+          fail=0
+          chk() {
+            mode="$1"; path="$2"
+            if [ ! -e "$STAGE$path" ] && [ ! -L "$STAGE$path" ]; then
+              echo "MISSING: $path"; fail=1; return
+            fi
+            got=$(stat -c '%a' "$STAGE$path")
+            if [ "$got" != "$mode" ]; then
+              echo "MODE MISMATCH: $path got=$got want=$mode"; fail=1
+            else
+              echo "OK $mode $path"
+            fi
+          }
+          chk 755 /usr/bin/pping2
+          chk 755 /usr/bin/pping2-load.sh
+          chk 644 /etc/systemd/system/pping2.service
+          chk 640 /etc/default/pping2
+          chk 644 /etc/cron.d/pping2-load
+          chk 644 /usr/share/pping2/schema.sql
+          if [ -d "$STAGE/var/log/pping2" ]; then
+            echo "OK dir /var/log/pping2"
+          else
+            echo "MISSING dir /var/log/pping2"; fail=1
+          fi
+          exit "$fail"
+
+      - name: Build .deb from staged tree
+        run: |
+          set -eu
+          mkdir "$STAGE/DEBIAN"
+          sed \
+            -e 's/^Version: .*/Version: 0.0.0-ci/' \
+            -e 's/^Architecture: .*/Architecture: amd64/' \
+            packaging/debian/control > "$STAGE/DEBIAN/control"
+          install -m 0755 packaging/debian/postinst "$STAGE/DEBIAN/postinst"
+          install -m 0755 packaging/debian/prerm    "$STAGE/DEBIAN/prerm"
+          cp packaging/debian/conffiles             "$STAGE/DEBIAN/conffiles"
+          # --root-owner-group forces root:root in the .deb metadata so the
+          # smoke matches what release.yml (which builds inside debian:*
+          # containers as root) produces. Without it dpkg-deb hints with
+          # the runner-user uid/gid in the archive.
+          dpkg-deb --root-owner-group --build "$STAGE" pping2-smoke.deb
+          dpkg-deb --info pping2-smoke.deb
+          dpkg-deb --contents pping2-smoke.deb
+
+      - name: Install .deb and verify postinst runtime effects
+        # apt resolves runtime deps (libpcap0.8t64, libstdc++6). dpkg-i alone
+        # would fail dep resolution on a clean runner.
+        run: |
+          set -eu
+          sudo apt-get install -y --no-install-recommends ./pping2-smoke.deb
+          got=$(stat -c '%a' /etc/default/pping2)
+          [ "$got" = "640" ] || { echo "FAIL: /etc/default/pping2 mode=$got (want 640)"; exit 1; }
+          echo "OK /etc/default/pping2 mode=$got"
+          getcap /usr/bin/pping2 | tee /tmp/getcap.out
+          grep -q 'cap_net_raw' /tmp/getcap.out \
+              || { echo "FAIL: cap_net_raw not set on /usr/bin/pping2"; exit 1; }
+          echo "OK cap_net_raw applied"
+          ls -ld /var/log/pping2
+          ownr=$(stat -c '%U' /var/log/pping2)
+          [ "$ownr" = "nobody" ] || { echo "FAIL: /var/log/pping2 owner=$ownr (want nobody)"; exit 1; }
+          echo "OK /var/log/pping2 owner=$ownr"
+
+      - name: Remove .deb (clean exit)
+        if: always()
+        run: sudo dpkg --remove pping2 || true
