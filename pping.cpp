@@ -807,7 +807,12 @@ static void handleSighup(int) { reopenRequested = 1; }
 static bool reopenLogfile(const char* path)
 {
     fflush(stdout);
-    int fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    // O_NOFOLLOW + 0640: refuse to follow symlinks at the path (closes
+    // the nobody-RCE-to-root-write chain when --logfile points into the
+    // nobody-owned /var/log/pping2/ — see also the dropPrivileges ordering
+    // in main()), and tighten the mode so per-flow metadata (src/dst
+    // IPs, ports, RTTs) isn't world-readable.
+    int fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0640);
     if (fd < 0) return false;
     int rc = dup2(fd, STDOUT_FILENO);
     int saved_errno = errno;
@@ -1052,14 +1057,6 @@ int main(int argc, char* const* argv)
         sumInt = 0.;
     }
 
-    if (!logfilePath.empty()) {
-        if (!reopenLogfile(logfilePath.c_str())) {
-            std::cerr << "fatal: cannot open --logfile=" << logfilePath
-                      << ": " << strerror(errno) << "\n";
-            exit(EXIT_FAILURE);
-        }
-    }
-
     BaseSniffer* snif;
     {
         SnifferConfiguration config;
@@ -1102,7 +1099,19 @@ int main(int argc, char* const* argv)
             exit(EXIT_FAILURE);
         }
     }
+    // Drop before opening --logfile so the open() runs as nobody. With
+    // O_NOFOLLOW in reopenLogfile() this is belt-and-suspenders, but it
+    // also means even if a future change drops O_NOFOLLOW, root never
+    // touches paths under nobody-owned /var/log/pping2/ — a symlink
+    // planted there by a nobody-compromised process can't escalate.
     dropPrivileges("nobody");
+    if (!logfilePath.empty()) {
+        if (!reopenLogfile(logfilePath.c_str())) {
+            std::cerr << "fatal: cannot open --logfile=" << logfilePath
+                      << ": " << strerror(errno) << "\n";
+            exit(EXIT_FAILURE);
+        }
+    }
     node = getFQDN();
     if (liveInp && machineReadable) {
         // output every 100ms when piping to analysis/display program
