@@ -1099,6 +1099,8 @@ int main(int argc, char* const* argv)
         try {
             if (liveInp) {
                 snif = new Sniffer(fname, config);
+                fprintf(stderr, "pping2 %s capturing on %s\n",
+                        PPING_VERSION, fname.c_str());
                 if (filtLocal) {
                     localIP = localAddrOf(fname);
                     if (localIP.empty()) {
