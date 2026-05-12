@@ -789,7 +789,7 @@ static std::string getFQDN()
     if (getaddrinfo(hostname, nullptr, &hints, &info) != 0 || !info) {
         return hostname;
     }
-    std::string fqdn = info->ai_canonname;
+    std::string fqdn = info->ai_canonname ? info->ai_canonname : hostname;
     freeaddrinfo(info);
     return fqdn;
 }
@@ -805,6 +805,7 @@ static std::string localAddrOf(const std::string ifname)
 
     if (getifaddrs(&ifap) == 0) {
         for (auto ifp = ifap; ifp; ifp = ifp->ifa_next) {
+            if (ifp->ifa_addr == nullptr) continue;
             if (ifname == ifp->ifa_name &&
                   ifp->ifa_addr->sa_family == AF_INET) {
                 uint32_t ip = ((struct sockaddr_in*)
