@@ -26,7 +26,7 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install build deps
         run: |
@@ -36,7 +36,7 @@ jobs:
 
       - name: Cache libtins
         id: cache-libtins
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .libtins
           key: libtins-${{ env.LIBTINS_VERSION }}-${{ matrix.runner }}
@@ -57,7 +57,7 @@ jobs:
         run: make LIBTINS="$LIBTINS_PREFIX"
 
       - name: Upload pping2 binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pping2-${{ matrix.arch }}-${{ github.sha }}
           path: pping2
@@ -75,7 +75,7 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install test deps
         run: |
@@ -84,13 +84,13 @@ jobs:
             build-essential libpcap-dev libssl-dev pkg-config
 
       - name: Restore libtins cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .libtins
           key: libtins-${{ env.LIBTINS_VERSION }}-${{ matrix.runner }}
 
       - name: Download pping2 binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pping2-${{ matrix.arch }}-${{ github.sha }}
 
@@ -114,11 +114,11 @@ jobs:
   build-musl-static:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache static libtins
         id: cache-libtins-static
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .libtins-static
           key: libtins-${{ env.LIBTINS_VERSION }}-alpine320-musl-static-aarch64
@@ -180,7 +180,7 @@ jobs:
             '
 
       - name: Upload static binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pping2-musl-static-aarch64-${{ github.sha }}
           path: pping2
@@ -195,7 +195,7 @@ jobs:
   package-smoke:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install packaging deps
         run: |
