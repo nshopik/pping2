@@ -6,12 +6,6 @@ Items deferred from the `/cso` security audit. Most are DoS / robustness, not di
 
 - [ ] **Wrap libtins calls that take untrusted bytes.** `pkt.pdu()->find_pdu<TCP>()`, `find_pdu<IP>()`, and the `src_addr()` paths can throw or return null on malformed packets. Only `timestamp()` is wrapped today. Add a top-level `try { ... } catch (std::exception&) { return; }` around the parse section in `process_packet`, and check `pkt.pdu()` for null first.
 
-## Robustness (local crashes, not security)
-
-- [ ] **Null-check `ifa_addr` in `localAddrOf`.** `getifaddrs(3)` is allowed to return entries with `ifa_addr == NULL` (e.g. some virtual interfaces). Skip those instead of dereferencing. `pping.cpp:416`.
-
-- [ ] **Null-check `info->ai_canonname` in `getFQDN`.** `getaddrinfo` does not guarantee `ai_canonname` is set even with `AI_CANONNAME` requested. Fall back to `hostname` if null. `pping.cpp:399`.
-
 ## Considered and not a finding
 
 - `-f` BPF filter string concatenation (`pping.cpp:525`) — `-f` is from `argv` (trusted) and libpcap's filter compiler validates the result. Not exploitable.
@@ -47,10 +41,6 @@ Surfaced in the Opus adversarial review of the `install-quickstart` branch. None
 - [ ] **CI: smoke-test the install targets.** Add a `make install-all DESTDIR=$(mktemp -d) PREFIX=/usr SYSCONFDIR=/etc` step to `.github/workflows/` after the build. Assert all 6 expected files appear at expected paths. Catches Makefile recipe regressions, sed-substitution correctness, and unit-file syntax (optionally pipe through `systemd-analyze verify`). Today these targets aren't exercised in CI — only manual WSL smoke tests.
 
 - [ ] **Tests for `--logfile` and SIGHUP reopen.** `test/test_cli.sh` doesn't cover the new flag. Add a check that `pping --logfile=/tmp/x.log -r test/pcaps/known.pcap` writes output to that path and produces the same content as plain stdout redirection. SIGHUP/rotation behavior is harder to test without live capture but a fork+kill+inode-comparison contrived test would work.
-
-- [ ] **Validate `PREFIX` / `SYSCONFDIR` in install recipes.** Currently `make install-systemd SYSCONFDIR=` (empty) silently creates `/default/pping`; `PREFIX=/usr/local/bin/foo|bar` (containing the sed delimiter `|`) corrupts the substituted scripts without failing. Add early `@test -n "$(PREFIX)"` / `@test -n "$(SYSCONFDIR)"` guards to `install-*` targets. For sed-metachar safety either escape the substitution value or document the constraint in the Makefile comments. `Makefile:42-44`.
-
-- [ ] **Handle `DESTDIR` whitespace robustly.** `if [ -z "$(DESTDIR)" ]` treats `DESTDIR=" "` (single space, common shell typo) as set — silently skips `setcap` and the install warning, leaving an unprivileged binary with no diagnostic. Either trim before checking, or document that `DESTDIR` must be empty rather than whitespace-only. `Makefile:47-58`.
 
 ## Performance follow-ups (phase 3)
 
