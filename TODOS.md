@@ -56,6 +56,18 @@ Surfaced in the Opus adversarial review of the `install-quickstart` branch. None
 
 Brainstormed designs and plans live under `docs/superpowers/` which is gitignored — listed here so the work is discoverable after the current branch lands.
 
-- [ ] **Execute the bench-harness plan.** Branch `bench-harness`. Replaces the noisy 6-packet `test/bench.sh` with a 20-iteration multi-mode harness keyed on `~/bench.pcap`, adds a `make bench` target, and adds `test/profile.sh` for DWARF perf capture. Three committed files (`test/bench.sh`, `test/profile.sh`, `Makefile`) plus local-only baseline output under `docs/superpowers/baselines/`. Spec + plan at `docs/superpowers/specs/2026-05-11-bench-harness-design.md` and `docs/superpowers/plans/2026-05-11-bench-harness.md`. No changes to `pping.cpp` or build flags — pure infrastructure so the next round can measure honestly.
+- [x] **Execute the bench-harness plan.** Landed in PR #13 (`ca2b83b`). 20-iteration multi-mode harness keyed on `~/bench.pcap`, `make bench` target, `test/profile.sh` for DWARF perf capture.
 
-- [ ] **Phase-2 perf optimization.** After bench-harness merges, open the captured profile (`docs/superpowers/baselines/2026-05-11-profile-a-hybrid-*.txt`) and brainstorm a single-target optimization spec from the dominant cluster. The pilot 9-sample profile on `-a --mode hybrid` pointed at `std::unordered_map` (FNV-1a `ByteHash` + `_Hashtable::erase` from `cleanUp`) — libtins was invisible — but confirm against the full ≥1,000-sample profile before committing. Candidate levers ranked: robin_map / flat_hash_map → bespoke parser → LTO/native → integer microseconds → hardware CRC32. Phase 1 (`hotpath-cleanup`, merged) bought ~1.55× human / ~1.10–1.15× production -e/-a; phase 2 needs to move the `-a` median.
+- [x] **Phase-2 perf optimization.** Landed in PR #14 (`6203692`). The structural lever (robin_map) was tried first per the ranking and missed the 15% gate at +10.8% with +79.7% RSS — reverted. The hash-function lever (hardware CRC32C in 8-byte strides) was tried next and cleared the gate by a wide margin: **+24% per-packet across all output modes** (`-a hybrid` 565 → 429 ns/pkt) with zero memory-layout change. The actual bottleneck was `ByteHash`'s byte-wise FNV-1a over 40/48-byte keys, not the hashmap structure — the original ranking had it backwards. Lesson logged in `docs/superpowers/baselines/phase2-gate-failure-2026-05-12.txt`.
+
+## Performance follow-ups (phase 3)
+
+If/when someone wants another perf swing, the spec's *Out of scope* section already names the unused levers, ranked by effort vs expected payoff:
+
+- [ ] **Parallel-stream CRC32.** Two/three independent accumulators to break the 3-cycle `crc32q` dependency chain. ~15 LOC on top of `CRC32Hash`. Marginal — maybe 1–2% on top of phase-2 since hashing is no longer the top cluster.
+- [ ] **v4 key shrink.** When `af == 4`, hash only the meaningful 24 bytes (4 src + 4 dst + 2 sport + 2 dport + pad) instead of the full 40. Touches `FlowKey::operator==` and `reversed()`. ~80 LOC + test updates. Cuts hash work ~40% on v4-dominant traffic; bigger payoff but bigger refactor.
+- [ ] **CRC32 + robin_map combined.** The phase-2 robin_map work proved structural alone is not enough, but the vendored headers are gone now; revisiting this lever means re-vendoring tsl or trying `phmap::flat_hash_map`. Only interesting if profile dominance shifts back to map probe cost.
+- [ ] **LTO / `-flto`.** Cross-file inlining across libtins → pping. Likely double-digit win on a binary this small; orthogonal to the hash work.
+- [ ] **Integer-microseconds timekeeping.** Replace `double` capTm with `int64_t` microseconds; saves the implicit double→int conversions on every match. Touches more of the code than it sounds.
+
+Plus the failure-note's brainstorm seeds (alternative hash families: xxhash3, absl::Hash, phmap) — only relevant if CRC32C distribution quality ever shows up as a bottleneck, which it currently does not.
