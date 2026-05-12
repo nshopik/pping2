@@ -31,6 +31,25 @@ ifeq ($(shell uname -s),Linux)
 LDFLAGS += -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack
 endif
 
+# STATIC=1 builds a fully self-contained binary — no shared library deps
+# and no dynamic linker reference baked into PT_INTERP. Use with a musl
+# toolchain (Alpine container, muslcc.cc cross-toolchain) plus libtins and
+# libpcap built as static archives. Target use case: drop-in deployment
+# on OpenWrt and other musl systems whose loader path
+# (/lib/ld-musl-*.so.1) differs from glibc's (/lib/ld-linux-*.so.1).
+#
+# -static and -pie are practically incompatible; -static-pie exists but
+# requires PIE-aware static libs (libtins) and is fragile across
+# toolchains. Drop PIE for static builds and keep the rest of the
+# hardening (relro/now/noexecstack, stack-protector, _FORTIFY_SOURCE).
+# This block must come AFTER the -pie/-fPIE appends so filter-out has
+# something to remove.
+ifeq ($(STATIC),1)
+CXXFLAGS := $(filter-out -fPIE,$(CXXFLAGS))
+LDFLAGS  := $(filter-out -pie,$(LDFLAGS))
+LDFLAGS  += -static -static-libstdc++ -static-libgcc
+endif
+
 # --- Install paths and packaging variables ---
 PREFIX      ?= /usr/local
 SYSCONFDIR  ?= /etc
