@@ -101,10 +101,15 @@ SUBST = sed \
 
 # --- Install / uninstall ---
 
+.PHONY: check-install-vars
+check-install-vars:
+	@test -n "$(PREFIX)"     || { echo "ERROR: PREFIX is empty";     exit 1; }
+	@test -n "$(SYSCONFDIR)" || { echo "ERROR: SYSCONFDIR is empty"; exit 1; }
+
 # install does not depend on the build target so that pre-built binary
 # (tar.gz release) users can run `make install-all` without needing the
 # source or libtins. Source users: `make pping2 && sudo make install-all`.
-install:
+install: check-install-vars
 	@test -f pping2 || { echo "Build first: make pping2"; exit 1; }
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 0755 pping2 $(DESTDIR)$(PREFIX)/bin/pping2
@@ -119,7 +124,7 @@ ifeq ($(shell uname -s),Linux)
 	fi
 endif
 
-install-systemd:
+install-systemd: check-install-vars
 	install -d $(DESTDIR)$(SYSCONFDIR)/systemd/system
 	$(SUBST) contrib/systemd/pping2.service \
 	    > $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2.service
@@ -150,7 +155,7 @@ install-systemd:
 	@echo "Edit $(SYSCONFDIR)/default/pping2 (set PPING_IFACE), then:"
 	@echo "  sudo systemctl enable --now pping2"
 
-install-clickhouse:
+install-clickhouse: check-install-vars
 	install -d $(DESTDIR)$(PREFIX)/bin
 	$(SUBST) contrib/clickhouse/pping2-load.sh \
 	    > $(DESTDIR)$(PREFIX)/bin/pping2-load.sh
@@ -167,7 +172,7 @@ install-clickhouse:
 	@echo "  clickhouse-client < $(SHAREDIR)/schema.sql"
 	@echo "Then set CH_ARGS in $(SYSCONFDIR)/default/pping2."
 
-install-all:
+install-all: check-install-vars
 ifneq ($(shell uname -s),Linux)
 	@echo "install-all is Linux-only (needs systemd + setcap + /etc/cron.d)."
 	@echo "On macOS/BSD use 'make install' for a binary-only install."
@@ -195,5 +200,5 @@ uninstall-clickhouse:
 uninstall-all: uninstall-clickhouse uninstall-systemd uninstall
 
 .PHONY: test check clean pcaps bench
-.PHONY: install install-systemd install-clickhouse install-all
+.PHONY: check-install-vars install install-systemd install-clickhouse install-all
 .PHONY: uninstall uninstall-systemd uninstall-clickhouse uninstall-all
