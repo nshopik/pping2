@@ -6,6 +6,16 @@ LDFLAGS += -L$(LIBTINS)/lib -ltins -lpcap
 CXXFLAGS += -std=c++17 -g -O3 -Wall -flto=auto
 LDFLAGS  += -flto=auto
 
+# Reproducible version string: exact tag → "1.1.1"; off-tag → "1.1.1-3-gSHA";
+# dirty tree → "...-dirty"; tarball (no .git) → VERSION file; neither → unknown.
+# git -C $(CURDIR) so `make -C path/to/pping2` from elsewhere still resolves
+# the repo's git state, not make's invocation cwd.
+VERSION := $(shell git -C $(CURDIR) describe --tags --dirty --match 'v*' 2>/dev/null \
+                   | sed 's/^v//' \
+                   || cat $(CURDIR)/VERSION 2>/dev/null \
+                   || echo unknown)
+CPPFLAGS += -DPPING_VERSION=\"$(VERSION)\"
+
 # CRC32C hardware hash requires SSE4.2 (included in x86-64-v3) on amd64, and
 # the CRC extension on aarch64. GCC's default -march=armv8-a does NOT enable
 # CRC32 even though the ARMv8.0-A spec mandates it — +crc opts into the
