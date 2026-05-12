@@ -228,9 +228,102 @@ jobs:
           name: tarball-macos-${{ matrix.arch }}
           path: pping2-*-macos-*.tar.gz
 
+  # Static musl build — drop-in binary for OpenWrt and other musl systems.
+  # Statically links libtins, libpcap, and musl libc itself; no shared lib
+  # deps and no PT_INTERP. Built inside an Alpine container via docker so
+  # the host (checkout/cache/upload) stays on the standard glibc runner.
+  build-musl-static:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache static libtins
+        id: cache-libtins-static
+        uses: actions/cache@v4
+        with:
+          path: .libtins-static
+          key: libtins-${{ env.LIBTINS_VERSION }}-alpine320-musl-static-${{ matrix.arch }}
+
+      - name: Build libtins + pping2 inside Alpine
+        env:
+          LIBTINS_VERSION: ${{ env.LIBTINS_VERSION }}
+        run: |
+          HOST_UID=$(id -u)
+          HOST_GID=$(id -g)
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -w /work \
+            -e LIBTINS_VERSION \
+            -e HOST_UID \
+            -e HOST_GID \
+            alpine:3.20 sh -c '
+              set -eux
+              apk add --no-cache build-base cmake git pkgconf \
+                  libpcap-dev linux-headers binutils file
+
+              if [ ! -f .libtins-static/lib/libtins.a ]; then
+                rm -rf .libtins-static
+                git clone --depth=1 --branch "$LIBTINS_VERSION" \
+                    https://github.com/mfontanini/libtins.git /tmp/libtins-src
+                cmake -S /tmp/libtins-src -B /tmp/libtins-build \
+                    -DCMAKE_BUILD_TYPE=Release \
+                    -DLIBTINS_BUILD_SHARED=0 \
+                    -DLIBTINS_ENABLE_PCAP=1 \
+                    -DCMAKE_INSTALL_PREFIX=/work/.libtins-static
+                cmake --build /tmp/libtins-build --parallel "$(nproc)"
+                cmake --install /tmp/libtins-build
+              fi
+
+              make STATIC=1 LIBTINS=/work/.libtins-static
+
+              file pping2
+              if readelf -l pping2 | grep -q INTERP; then
+                echo "FAIL: binary has dynamic interpreter"
+                readelf -l pping2 | grep -A1 INTERP
+                exit 1
+              fi
+              if readelf -d pping2 | grep -q NEEDED; then
+                echo "FAIL: binary has NEEDED entries"
+                readelf -d pping2 | grep NEEDED
+                exit 1
+              fi
+              echo "OK: fully static, no shared library deps"
+
+              ./pping2 -h >/dev/null 2>&1 || true
+
+              chown -R "$HOST_UID":"$HOST_GID" /work
+            '
+
+      - name: Build tarball
+        env:
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          STAGING="pping2-${VERSION}-linux-${ARCH}-musl-static"
+          mkdir "$STAGING"
+          cp pping2 Makefile README.md clickhouse.md LICENSE "$STAGING/"
+          cp -r contrib "$STAGING/"
+          tar czf "${STAGING}.tar.gz" "$STAGING"
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-musl-static-${{ matrix.arch }}
+          path: pping2-*-linux-*-musl-static.tar.gz
+
   # publish blocks on all build legs — a failing build prevents any release.
   publish:
-    needs: [build-debian, build-ubuntu, build-macos]
+    needs: [build-debian, build-ubuntu, build-macos, build-musl-static]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
