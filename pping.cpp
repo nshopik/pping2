@@ -929,6 +929,7 @@ static void usage(const char* pname) {
 }
 
 static void help(const char* pname) {
+    fprintf(stderr, "pping2 %s\n", PPING_VERSION);
     usage(pname);
     std::cerr << " flags:\n"
 "  -i|--interface ifname   do live capture from interface <ifname>\n"
