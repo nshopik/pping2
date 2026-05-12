@@ -3,7 +3,8 @@
 LIBTINS = $(HOME)/src/libtins
 CPPFLAGS += -I$(LIBTINS)/include
 LDFLAGS += -L$(LIBTINS)/lib -ltins -lpcap
-CXXFLAGS += -std=c++17 -g -O3 -Wall
+CXXFLAGS += -std=c++17 -g -O3 -Wall -flto=auto
+LDFLAGS  += -flto=auto
 
 # CRC32C hardware hash requires SSE4.2 (included in x86-64-v3) on amd64, and
 # the CRC extension on aarch64. GCC's default -march=armv8-a does NOT enable
