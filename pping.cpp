@@ -789,7 +789,7 @@ static std::string getFQDN()
     if (getaddrinfo(hostname, nullptr, &hints, &info) != 0 || !info) {
         return hostname;
     }
-    std::string fqdn = info->ai_canonname;
+    std::string fqdn = info->ai_canonname ? info->ai_canonname : hostname;
     freeaddrinfo(info);
     return fqdn;
 }
