@@ -917,6 +917,7 @@ static struct option opts[] = {
     { "tsvalMaxAge", required_argument, nullptr, 'M' },
     { "flowMaxIdle", required_argument, nullptr, 'F' },
     { "help",      no_argument,       nullptr, 'h' },
+    { "version",   no_argument,       nullptr, 'V' },
     { "mode",      required_argument, nullptr,  0  },   // long-only
     { "flowMaxAge", required_argument, nullptr, 0 },    // long-only
     { "logfile",   required_argument, nullptr, 0 },     // long-only
@@ -928,6 +929,7 @@ static void usage(const char* pname) {
 }
 
 static void help(const char* pname) {
+    fprintf(stderr, "pping2 %s\n", PPING_VERSION);
     usage(pname);
     std::cerr << " flags:\n"
 "  -i|--interface ifname   do live capture from interface <ifname>\n"
@@ -1022,7 +1024,7 @@ int main(int argc, char* const* argv)
         exit(1);
     }
     int longindex = -1;
-    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqvea",
+    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqveaV",
                                  opts, &longindex)) != -1; ) {
         switch (c) {
         case 'i': liveInp = true; fname = optarg; break;
@@ -1040,6 +1042,9 @@ int main(int argc, char* const* argv)
         case 'M': tsvalMaxAge = atof(optarg); break;
         case 'F': flowMaxIdle = atof(optarg); break;
         case 'h': help(argv[0]); exit(0);
+        case 'V':
+            printf("pping2 %s\n", PPING_VERSION);
+            exit(0);
         case 0: {
             // long-only options dispatched by name
             const char* name = opts[longindex].name;
@@ -1094,6 +1099,8 @@ int main(int argc, char* const* argv)
         try {
             if (liveInp) {
                 snif = new Sniffer(fname, config);
+                fprintf(stderr, "pping2 %s capturing on %s\n",
+                        PPING_VERSION, fname.c_str());
                 if (filtLocal) {
                     localIP = localAddrOf(fname);
                     if (localIP.empty()) {

@@ -82,6 +82,32 @@ else
     fail "shutdown_flush_emits_rows" "expected non-zero output rows from -c-truncated run"
 fi
 
+# 9. -V exits 0 and prints a non-empty "pping2 <version>" line to stdout
+VERSION_OUT=$("$PPING" -V 2>/dev/null)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$VERSION_OUT" | grep -qE '^pping2 [^ ]+$'; then
+    pass "version_flag_short"
+else
+    fail "version_flag_short" "expected exit 0 + 'pping2 <token>'; got rc=$RC out='$VERSION_OUT'"
+fi
+
+# 10. --version exits 0 and prints the same non-empty "pping2 <version>" line
+VERSION_OUT2=$("$PPING" --version 2>/dev/null)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$VERSION_OUT2" | grep -qE '^pping2 [^ ]+$'; then
+    pass "version_flag_long"
+else
+    fail "version_flag_long" "expected exit 0 + 'pping2 <token>'; got rc=$RC out='$VERSION_OUT2'"
+fi
+
+# 11. --help first line starts with "pping2 " (version banner present)
+HELP_LINE1=$("$PPING" --help 2>&1 | head -1)
+if echo "$HELP_LINE1" | grep -qE '^pping2 [^ ]+'; then
+    pass "help_version_banner"
+else
+    fail "help_version_banner" "expected first line to match '^pping2 <token>'; got '$HELP_LINE1'"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo ""
 echo "test_cli: $PASS/$TOTAL checks passed"
