@@ -39,7 +39,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install build deps
         run: |
@@ -54,7 +54,7 @@ jobs:
 
       - name: Cache libtins
         id: cache-libtins
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .libtins
           key: libtins-${{ env.LIBTINS_VERSION }}-${{ matrix.distro }}-${{ matrix.arch }}
@@ -93,7 +93,7 @@ jobs:
             "pping2_${VERSION}_${{ matrix.distro }}_${ARCH}.deb"
 
       - name: Upload .deb
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deb-${{ matrix.distro }}-${{ matrix.arch }}
           path: pping2_*.deb
@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload tarball
         if: matrix.tarball
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tarball-linux-${{ matrix.arch }}
           path: pping2-*-linux-*.tar.gz
@@ -129,7 +129,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install build deps
         run: |
@@ -144,7 +144,7 @@ jobs:
 
       - name: Cache libtins
         id: cache-libtins
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .libtins
           key: libtins-${{ env.LIBTINS_VERSION }}-ubuntu2404-${{ matrix.arch }}
@@ -183,7 +183,7 @@ jobs:
             "pping2_${VERSION}_ubuntu2404_${ARCH}.deb"
 
       - name: Upload .deb
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deb-ubuntu2404-${{ matrix.arch }}
           path: pping2_*.deb
@@ -199,7 +199,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install libtins
         run: brew install libtins
@@ -223,7 +223,7 @@ jobs:
           tar czf "pping2-${VERSION}-macos-${ARCH}.tar.gz" "$STAGING"
 
       - name: Upload tarball
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tarball-macos-${{ matrix.arch }}
           path: pping2-*-macos-*.tar.gz
@@ -241,7 +241,7 @@ jobs:
             arch: aarch64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set version
         id: ver
@@ -249,7 +249,7 @@ jobs:
 
       - name: Cache static libtins
         id: cache-libtins-static
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .libtins-static
           key: libtins-${{ env.LIBTINS_VERSION }}-alpine320-musl-static-${{ matrix.arch }}
@@ -316,7 +316,7 @@ jobs:
           tar czf "${STAGING}.tar.gz" "$STAGING"
 
       - name: Upload tarball
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tarball-musl-static-${{ matrix.arch }}
           path: pping2-*-linux-*-musl-static.tar.gz
@@ -329,7 +329,7 @@ jobs:
       contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           merge-multiple: true
 

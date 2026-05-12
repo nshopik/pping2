@@ -11,7 +11,7 @@ jobs:
   gen-goldens:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install build deps
         run: |
@@ -21,7 +21,7 @@ jobs:
 
       - name: Cache libtins
         id: cache-libtins
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .libtins
           key: libtins-${{ env.LIBTINS_VERSION }}-ubuntu-24.04
@@ -54,7 +54,7 @@ jobs:
           done
 
       - name: Upload goldens artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: seq-goldens
           path: test/golden/*.golden
