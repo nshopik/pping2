@@ -917,6 +917,7 @@ static struct option opts[] = {
     { "tsvalMaxAge", required_argument, nullptr, 'M' },
     { "flowMaxIdle", required_argument, nullptr, 'F' },
     { "help",      no_argument,       nullptr, 'h' },
+    { "version",   no_argument,       nullptr, 'V' },
     { "mode",      required_argument, nullptr,  0  },   // long-only
     { "flowMaxAge", required_argument, nullptr, 0 },    // long-only
     { "logfile",   required_argument, nullptr, 0 },     // long-only
@@ -1022,7 +1023,7 @@ int main(int argc, char* const* argv)
         exit(1);
     }
     int longindex = -1;
-    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqvea",
+    for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqveaV",
                                  opts, &longindex)) != -1; ) {
         switch (c) {
         case 'i': liveInp = true; fname = optarg; break;
@@ -1040,6 +1041,9 @@ int main(int argc, char* const* argv)
         case 'M': tsvalMaxAge = atof(optarg); break;
         case 'F': flowMaxIdle = atof(optarg); break;
         case 'h': help(argv[0]); exit(0);
+        case 'V':
+            printf("pping2 %s\n", PPING_VERSION);
+            exit(0);
         case 0: {
             // long-only options dispatched by name
             const char* name = opts[longindex].name;
