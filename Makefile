@@ -69,6 +69,7 @@ PREFIX      ?= /usr/local
 SYSCONFDIR  ?= /etc
 SHAREDIR    ?= $(PREFIX)/share/pping2
 DESTDIR     ?=
+_DESTDIR_EMPTY = $(if $(strip $(DESTDIR)),,1)
 
 pping2:  pping.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o pping2 pping.cpp $(LDFLAGS)
@@ -114,14 +115,14 @@ install: check-install-vars
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 0755 pping2 $(DESTDIR)$(PREFIX)/bin/pping2
 ifeq ($(shell uname -s),Linux)
-	if [ -z "$(DESTDIR)" ]; then \
-	    setcap cap_net_raw+ep $(PREFIX)/bin/pping2; \
-	else \
-	    echo ""; \
-	    echo "WARNING: setcap skipped because DESTDIR is set."; \
-	    echo "Apply in your packaging postinst (or run manually):"; \
-	    echo "  setcap cap_net_raw+ep $(PREFIX)/bin/pping2"; \
-	fi
+ifneq ($(_DESTDIR_EMPTY),)
+	setcap cap_net_raw+ep $(PREFIX)/bin/pping2
+else
+	@echo ""
+	@echo "WARNING: setcap skipped because DESTDIR is set."
+	@echo "Apply in your packaging postinst (or run manually):"
+	@echo "  setcap cap_net_raw+ep $(PREFIX)/bin/pping2"
+endif
 endif
 
 install-systemd: check-install-vars
