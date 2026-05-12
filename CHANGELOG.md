@@ -5,6 +5,29 @@ started at upstream commit
 [`6cc6a604`](https://github.com/pollere/pping/commit/6cc6a604916d29415bd2c8f51f8be8900f6c83c8).
 This is the first versioned release of the fork.
 
+## Unreleased
+
+### Changed
+
+- **CPU baseline raised to x86-64-v3 on amd64** (Intel Haswell ≥ 2013,
+  AMD Excavator ≥ 2015). aarch64 builds use ARMv8.0 CRC32 instructions
+  (mandatory in the ARMv8 baseline; no flag change). Aligns with Ubuntu's
+  direction on performance-sensitive packages.
+- Replaced the `ByteHash` FNV-1a flow-table hash with `CRC32Hash`, a
+  hardware CRC32C implementation using `_mm_crc32_u64` (x86) /
+  `__crc32cd` (ARM) over 8-byte strides. **~24% reduction in per-packet
+  cost across all output modes** vs v1.0.0 on the reference bench
+  (`-a hybrid` median: 565 ns/pkt → 429 ns/pkt). No memory layout change,
+  no behavior change — only the hash function.
+- Compile-time `#error` guards reject builds at lower `-march` or on
+  unsupported architectures (anything that isn't x86_64 with SSE4.2 or
+  aarch64 with CRC32).
+
+### Added
+
+- `test_crc32hash_sanity` unit test exercising determinism, single-bit
+  avalanche, and 16-bit bucket distribution on 4096 synthetic keys.
+
 ## v1.0.0 — 2026-05-07
 
 ### Added
