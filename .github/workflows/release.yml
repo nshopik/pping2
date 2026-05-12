@@ -258,8 +258,8 @@ jobs:
         env:
           LIBTINS_VERSION: ${{ env.LIBTINS_VERSION }}
         run: |
-          HOST_UID=$(id -u)
-          HOST_GID=$(id -g)
+          export HOST_UID=$(id -u)
+          export HOST_GID=$(id -g)
           docker run --rm \
             -v "${{ github.workspace }}:/work" \
             -w /work \
