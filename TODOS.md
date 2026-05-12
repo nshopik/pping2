@@ -52,14 +52,6 @@ Surfaced in the Opus adversarial review of the `install-quickstart` branch. None
 
 - [ ] **Handle `DESTDIR` whitespace robustly.** `if [ -z "$(DESTDIR)" ]` treats `DESTDIR=" "` (single space, common shell typo) as set — silently skips `setcap` and the install warning, leaving an unprivileged binary with no diagnostic. Either trim before checking, or document that `DESTDIR` must be empty rather than whitespace-only. `Makefile:47-58`.
 
-## Performance follow-ups (phase 2)
-
-Brainstormed designs and plans live under `docs/superpowers/` which is gitignored — listed here so the work is discoverable after the current branch lands.
-
-- [x] **Execute the bench-harness plan.** Landed in PR #13 (`ca2b83b`). 20-iteration multi-mode harness keyed on `~/bench.pcap`, `make bench` target, `test/profile.sh` for DWARF perf capture.
-
-- [x] **Phase-2 perf optimization.** Landed in PR #14 (`6203692`). The structural lever (robin_map) was tried first per the ranking and missed the 15% gate at +10.8% with +79.7% RSS — reverted. The hash-function lever (hardware CRC32C in 8-byte strides) was tried next and cleared the gate by a wide margin: **+24% per-packet across all output modes** (`-a hybrid` 565 → 429 ns/pkt) with zero memory-layout change. The actual bottleneck was `ByteHash`'s byte-wise FNV-1a over 40/48-byte keys, not the hashmap structure — the original ranking had it backwards. Lesson logged in `docs/superpowers/baselines/phase2-gate-failure-2026-05-12.txt`.
-
 ## Performance follow-ups (phase 3)
 
 If/when someone wants another perf swing, the spec's *Out of scope* section already names the unused levers, ranked by effort vs expected payoff:
