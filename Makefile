@@ -5,6 +5,14 @@ CPPFLAGS += -I$(LIBTINS)/include
 LDFLAGS += -L$(LIBTINS)/lib -ltins -lpcap
 CXXFLAGS += -std=c++17 -g -O3 -Wall
 
+# CRC32C hardware hash requires SSE4.2 (included in x86-64-v3).
+# GCC's "last -march wins" rule: users who append -march=native or -march=znver3
+# via CXXFLAGS override this intentionally; packagers targeting a lower baseline
+# should edit this line or set PPING_MARCH in a wrapper (YAGNI for now).
+ifeq ($(shell uname -m),x86_64)
+CXXFLAGS += -march=x86-64-v3
+endif
+
 # Hardening: pping2 runs as root briefly to open the packet socket and
 # then parses untrusted packets via libtins. Make a parse-time memory bug
 # harder to exploit. _FORTIFY_SOURCE requires -O1 or higher.

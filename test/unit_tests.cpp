@@ -152,14 +152,14 @@ static TsKey makeTs4(uint8_t s_a, uint8_t s_b, uint8_t s_c, uint8_t s_d,
 }
 
 /* -------------------------------------------------------------------------
- * FlowKey / TsKey / ByteHash invariants
+ * FlowKey / TsKey / CRC32Hash invariants
  * ---------------------------------------------------------------------- */
 
 static void test_flowkey_padding()
 {
     // Sizes are baked into the on-the-wire hash function. If they change,
     // every running pping that shares state (none today) would disagree —
-    // but more importantly, _pad shifting silently breaks ByteHash equality.
+    // but more importantly, _pad shifting silently breaks CRC32Hash equality.
     static_assert(sizeof(FlowKey) == 40, "FlowKey size guard");
     static_assert(sizeof(TsKey) == 48,   "TsKey size guard");
 
@@ -171,7 +171,7 @@ static void test_flowkey_padding()
     ASSERT_EQ(std::memcmp(&k1, &k2, sizeof(FlowKey)), 0);
     ASSERT_EQ(k1 == k2, true);
 
-    ByteHash h;
+    CRC32Hash h;
     ASSERT_EQ(h(k1), h(k2));
 
     // The pad bytes themselves: walk from `af` forward and verify all-zero.
@@ -224,9 +224,9 @@ static void test_flowkey_v4_v6_disambig()
 
     ASSERT_EQ(v4 == v6, false);
 
-    // Hashes will essentially always differ — FNV-1a is sensitive to a
+    // Hashes will essentially always differ — CRC32C is sensitive to a
     // single-byte change. Treat equality as a regression worth flagging.
-    ByteHash h;
+    CRC32Hash h;
     if (h(v4) == h(v6)) {
         std::fprintf(stderr,
             "  unexpected: v4 and v6 keys hashed equal (byte difference at af)\n");
@@ -916,6 +916,49 @@ static void test_cleanUp_flush_all_drains_active_flows()
     aggregateOutput = saved_agg;
 }
 REGISTER_TEST(test_cleanUp_flush_all_drains_active_flows);
+
+static void test_crc32hash_sanity()
+{
+    CRC32Hash h;
+
+    // Assertion 1: Determinism — two byte-identical FlowKeys must hash equal.
+    FlowKey k1 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80);
+    FlowKey k2 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80);
+    ASSERT_EQ(h(k1), h(k2));
+
+    // Assertion 2: Avalanche spot check — keys differing by exactly one bit
+    // (last byte of dstIP: 2 vs 3) must hash to different values.
+    // This catches "hash function constant-folded to zero" bugs.
+    FlowKey ka = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80);
+    FlowKey kb = makeFlow4(10, 0, 0, 1, 10, 0, 0, 3, 1234, 80);  // dstIP last byte differs
+    ASSERT_TRUE(h(ka) != h(kb));
+
+    // Assertion 3: No bucket collapse — 4096 keys differing only in sport/dport
+    // must distribute across 16-bit buckets such that no bucket exceeds 16 hits.
+    // CRC32C over diverse input bytes yields ≪ 1 hit per bucket on average;
+    // the 16-hit ceiling is a conservative guard against truncation/zeroing bugs.
+    constexpr int N = 4096;
+    constexpr int NBUCKETS = 65536;   // 2^16
+    constexpr int MAX_BUCKET = 16;
+    int buckets[NBUCKETS] = {};
+    for (int i = 0; i < N; ++i) {
+        FlowKey k{};
+        k.af = 4;
+        k.sport = static_cast<uint16_t>(i);
+        k.dport = static_cast<uint16_t>(0xC000 ^ i);
+        size_t bucket = h(k) & 0xFFFF;
+        buckets[bucket]++;
+    }
+    for (int b = 0; b < NBUCKETS; ++b) {
+        if (buckets[b] > MAX_BUCKET) {
+            std::fprintf(stderr,
+                "  bucket collapse in %s: bucket %d has %d hits (max %d)\n",
+                g_current_test, b, buckets[b], MAX_BUCKET);
+            ++g_failures;
+        }
+    }
+}
+REGISTER_TEST(test_crc32hash_sanity);
 
 /* -------------------------------------------------------------------------
  * Test runner

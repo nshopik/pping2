@@ -83,6 +83,26 @@
 #include <cstring>
 #include "tins/tins.h"
 
+// CRC32C hardware intrinsic wrapper — one per arch.
+// Allows a single unrolled loop in CRC32Hash to serve both x86_64 and aarch64.
+#if defined(__x86_64__)
+  #include <nmmintrin.h>
+  // Belt-and-braces: catch a stripped -march that lost SSE4.2.
+  #if !defined(__SSE4_2__)
+    #error "pping2 needs SSE4.2 — build with -march=x86-64-v2 or higher"
+  #endif
+  static inline uint64_t crc32c_u64(uint64_t acc, uint64_t v) noexcept {
+      return _mm_crc32_u64(acc, v);
+  }
+#elif defined(__aarch64__)
+  #include <arm_acle.h>
+  static inline uint64_t crc32c_u64(uint64_t acc, uint64_t v) noexcept {
+      return __crc32cd(static_cast<uint32_t>(acc), v);
+  }
+#else
+  #error "pping2 requires x86_64 (SSE4.2+) or aarch64 (ARMv8) with CRC32"
+#endif
+
 using namespace Tins;
 
 // Packed POD key for flow lookup. 40B total: 16+16+2+2+1 = 37 named bytes,
@@ -124,16 +144,22 @@ struct TsKey {
 };
 static_assert(sizeof(TsKey) == 48, "TsKey size changed; tests rely on this");
 
-// FNV-1a over the raw bytes of T. Padding participates — that's why the
-// zero-pad invariant above is load-bearing.
-struct ByteHash {
+// Hardware CRC32C over the raw bytes of T in 8-byte strides.
+// Padding participates — that's why the zero-pad invariant above is load-bearing.
+// sizeof(T) is compile-time known; GCC at -O3 unrolls the loop fully
+// (5 strides for FlowKey/40B, 6 strides for TsKey/48B) — no residual loop.
+// Requires sizeof(T) % 8 == 0 (enforced by static_assert).
+struct CRC32Hash {
     template<class T>
     size_t operator()(const T& k) const noexcept {
+        static_assert(sizeof(T) % 8 == 0,
+                      "CRC32Hash requires key size to be a multiple of 8");
         const uint8_t* p = reinterpret_cast<const uint8_t*>(&k);
-        size_t h = 14695981039346656037ULL;
-        for (size_t i = 0; i < sizeof(T); ++i) {
-            h ^= p[i];
-            h *= 1099511628211ULL;
+        uint64_t h = 0;
+        for (size_t i = 0; i < sizeof(T); i += 8) {
+            uint64_t w;
+            std::memcpy(&w, p + i, 8);
+            h = crc32c_u64(h, w);
         }
         return h;
     }
@@ -207,8 +233,8 @@ struct tsInfo {
     double dBytes;  //total bytes departed
 };
 
-static std::unordered_map<FlowKey, flowRec*, ByteHash> flows;
-static std::unordered_map<TsKey, tsInfo, ByteHash> tsTbl;
+static std::unordered_map<FlowKey, flowRec*, CRC32Hash> flows;
+static std::unordered_map<TsKey,   tsInfo,   CRC32Hash> tsTbl;
 
 // Allocation-free IP-to-string formatter.  Wraps inet_ntop() with a
 // stack buffer sized for the longest IPv6 textual form.  Replaces
