@@ -55,6 +55,18 @@ See **Compiling** below.
 
 ## Compiling
 
+### CPU baseline
+
+The build targets **x86-64-v3** on amd64 (Intel Haswell ≥ 2013, AMD Excavator
+≥ 2015 — covers all server CPUs of the last decade) and **ARMv8.0** on aarch64.
+The flow-table hash uses hardware CRC32C instructions (`_mm_crc32_u64` on
+x86, `__crc32cd` on ARM), so SSE4.2 / ARMv8 CRC32 is required at compile time.
+This aligns with Ubuntu's direction on performance-sensitive packages, which
+have begun targeting x86-64-v3 rather than the default `amd64` (v1) baseline.
+
+For CPUs older than this, edit `-march=x86-64-v3` out of the Makefile and
+replace `CRC32Hash` with a software fallback — not supported out of the box.
+
 ### Prerequisites
 
 pping2 depends on the [libtins](http://libtins.github.io/) packet parsing
@@ -251,10 +263,41 @@ path and are not counted.
 prints a wall-clock summary line to stderr:
 
 ```
-wall-clock: 4.213s, 1000000 packets, 4213.0 ns/pkt, 0.237 Mpps
+wall-clock: 1.787s, 4000000 packets, 446.7 ns/pkt, 2.24 Mpps
 ```
 
 Live capture (`-i`) does not print this line.
+
+### Line-rate rule of thumb
+
+At 10 Gbit/s line rate each packet on the wire has a fixed per-packet budget
+(frame + 8 B preamble + 12 B inter-frame gap, all at 10 Gb/s):
+
+| Frame size | Per-packet budget | Line-rate pps |
+| :--------- | :---------------- | :------------ |
+| 64 B (minimum) | **~67 ns** | 14.88 Mpps |
+| 512 B          | ~430 ns    | 2.34 Mpps  |
+| 1500 B (default MTU) | ~1216 ns | 822 kpps |
+
+So a single capture core at ~450 ns/packet keeps up with 10 G of ≥ 512-byte
+frames comfortably, has plenty of headroom for 1500-byte frames, but can't
+saturate worst-case 64-byte line-rate on one core. Real-world TCP flows are
+mostly large frames; a single capture thread comfortably handles 10 G in
+practice. For 25 G / 40 G / 100 G or for adversarial small-packet workloads,
+plan to scale via multiple capture instances pinned to different RSS queues.
+
+### Reference numbers
+
+Run the bench harness on your hardware (`make bench` writes a dated baseline
+under `docs/superpowers/baselines/`). For reference, on an Intel i7-12700F
+(Alder Lake, x86-64-v3), 4 M-packet pcap, 10 iterations median:
+
+| mode | ns/pkt | Mpps |
+| :--- | -----: | ---: |
+| `-a` hybrid (aggregated) | 428.6 | 2.33 |
+| `-m` hybrid (compact)    | 465.7 | 2.15 |
+| human (default)          | 507.1 | 1.96 |
+| `-e` hybrid (extended)   | 562.1 | 1.78 |
 
 ## Releases
 
