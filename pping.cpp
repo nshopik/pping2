@@ -108,7 +108,7 @@ using namespace Tins;
 // Packed POD key for flow lookup. 40B total: 16+16+2+2+1 = 37 named bytes,
 // then 3B trailing pad after `af`. Default member initializers zero everything
 // (including _pad), so `FlowKey k;` produces a key whose padding bytes are
-// guaranteed zero — required so memcmp/ByteHash agree across construction sites.
+// guaranteed zero — required so memcmp/CRC32Hash agree across construction sites.
 struct FlowKey {
     std::array<uint8_t, 16> srcIP{};   // v4 in first 4 bytes, rest zero
     std::array<uint8_t, 16> dstIP{};
