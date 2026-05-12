@@ -47,7 +47,6 @@ Surfaced in the Opus adversarial review of the `install-quickstart` branch. None
 If/when someone wants another perf swing, the spec's *Out of scope* section already names the unused levers, ranked by effort vs expected payoff:
 
 - [ ] **Parallel-stream CRC32.** Two/three independent accumulators to break the 3-cycle `crc32q` dependency chain. ~15 LOC on top of `CRC32Hash`. Marginal — maybe 1–2% on top of phase-2 since hashing is no longer the top cluster.
-- [ ] **v4 key shrink.** When `af == 4`, hash only the meaningful 24 bytes (4 src + 4 dst + 2 sport + 2 dport + pad) instead of the full 40. Touches `FlowKey::operator==` and `reversed()`. ~80 LOC + test updates. Cuts hash work ~40% on v4-dominant traffic; bigger payoff but bigger refactor.
 - [ ] **CRC32 + robin_map combined.** The phase-2 robin_map work proved structural alone is not enough, but the vendored headers are gone now; revisiting this lever means re-vendoring tsl or trying `phmap::flat_hash_map`. Only interesting if profile dominance shifts back to map probe cost.
 - [ ] **Integer-microseconds timekeeping.** Replace `double` capTm with `int64_t` microseconds; saves the implicit double→int conversions on every match. Touches more of the code than it sounds.
 
