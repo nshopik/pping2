@@ -5,7 +5,7 @@ started at upstream commit
 [`6cc6a604`](https://github.com/pollere/pping/commit/6cc6a604916d29415bd2c8f51f8be8900f6c83c8).
 This is the first versioned release of the fork.
 
-## Unreleased
+## v1.1.0 — 2026-05-12
 
 ### Changed
 
