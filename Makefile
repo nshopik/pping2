@@ -5,12 +5,18 @@ CPPFLAGS += -I$(LIBTINS)/include
 LDFLAGS += -L$(LIBTINS)/lib -ltins -lpcap
 CXXFLAGS += -std=c++17 -g -O3 -Wall
 
-# CRC32C hardware hash requires SSE4.2 (included in x86-64-v3).
+# CRC32C hardware hash requires SSE4.2 (included in x86-64-v3) on amd64, and
+# the CRC extension on aarch64. GCC's default -march=armv8-a does NOT enable
+# CRC32 even though the ARMv8.0-A spec mandates it — +crc opts into the
+# extension explicitly so __crc32cd from <arm_acle.h> is callable.
 # GCC's "last -march wins" rule: users who append -march=native or -march=znver3
 # via CXXFLAGS override this intentionally; packagers targeting a lower baseline
 # should edit this line or set PPING_MARCH in a wrapper (YAGNI for now).
 ifeq ($(shell uname -m),x86_64)
 CXXFLAGS += -march=x86-64-v3
+endif
+ifeq ($(shell uname -m),aarch64)
+CXXFLAGS += -march=armv8-a+crc
 endif
 
 # Hardening: pping2 runs as root briefly to open the packet socket and
