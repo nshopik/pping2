@@ -12,7 +12,19 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    # Matrix on amd64 + arm64 so a regression in either build (e.g. the
+    # aarch64 +crc march opt-in needed for __crc32cd) is caught at PR time,
+    # not at release-tag time. The fail-fast: false keeps both arches
+    # running so a failure in one doesn't hide failures in the other.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +39,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .libtins
-          key: libtins-${{ env.LIBTINS_VERSION }}-ubuntu-24.04
+          key: libtins-${{ env.LIBTINS_VERSION }}-${{ matrix.runner }}
 
       - name: Build libtins (cache miss)
         if: steps.cache-libtins.outputs.cache-hit != 'true'
@@ -47,13 +59,21 @@ jobs:
       - name: Upload pping2 binary
         uses: actions/upload-artifact@v4
         with:
-          name: pping2-${{ github.sha }}
+          name: pping2-${{ matrix.arch }}-${{ github.sha }}
           path: pping2
           retention-days: 7
 
   test:
     needs: build
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,12 +87,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .libtins
-          key: libtins-${{ env.LIBTINS_VERSION }}-ubuntu-24.04
+          key: libtins-${{ env.LIBTINS_VERSION }}-${{ matrix.runner }}
 
       - name: Download pping2 binary
         uses: actions/download-artifact@v4
         with:
-          name: pping2-${{ github.sha }}
+          name: pping2-${{ matrix.arch }}-${{ github.sha }}
 
       - name: Make pping2 executable
         # touch bumps mtime so `make` treats the downloaded artifact as

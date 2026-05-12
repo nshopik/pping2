@@ -10,9 +10,11 @@ This is the first versioned release of the fork.
 ### Changed
 
 - **CPU baseline raised to x86-64-v3 on amd64** (Intel Haswell ≥ 2013,
-  AMD Excavator ≥ 2015). aarch64 builds use ARMv8.0 CRC32 instructions
-  (mandatory in the ARMv8 baseline; no flag change). Aligns with Ubuntu's
-  direction on performance-sensitive packages.
+  AMD Excavator ≥ 2015) and **ARMv8-A + CRC** (`-march=armv8-a+crc`) on
+  aarch64. The aarch64 `+crc` opt-in is needed because GCC's default
+  `armv8-a` profile keeps the CRC extension disabled even though the
+  ARMv8.0-A spec mandates it. Aligns with Ubuntu's direction on
+  performance-sensitive packages.
 - Replaced the `ByteHash` FNV-1a flow-table hash with `CRC32Hash`, a
   hardware CRC32C implementation using `_mm_crc32_u64` (x86) /
   `__crc32cd` (ARM) over 8-byte strides. **~24% reduction in per-packet
