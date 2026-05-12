@@ -279,13 +279,6 @@ At 10 Gbit/s line rate each packet on the wire has a fixed per-packet budget
 | 512 B          | ~430 ns    | 2.34 Mpps  |
 | 1500 B (default MTU) | ~1216 ns | 822 kpps |
 
-So a single capture core at ~450 ns/packet keeps up with 10 G of ≥ 512-byte
-frames comfortably, has plenty of headroom for 1500-byte frames, but can't
-saturate worst-case 64-byte line-rate on one core. Real-world TCP flows are
-mostly large frames; a single capture thread comfortably handles 10 G in
-practice. For 25 G / 40 G / 100 G or for adversarial small-packet workloads,
-plan to scale via multiple capture instances pinned to different RSS queues.
-
 ### Reference numbers
 
 Run the bench harness on your hardware (`make bench` writes a dated baseline
