@@ -2,6 +2,9 @@
 # test_aggregate.sh — diff -a output against goldens for the three existing
 # pcap fixtures, plus invariants and synth-fixture checks.
 # POSIX sh.
+#
+# Regenerating goldens: see test_seq.sh header for the full procedure;
+# the aggregate recipe uses '-a', strips col 8 (node), and pipes through sort.
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PPING="$SCRIPT_DIR/../pping2"
 PCAPS_DIR="$SCRIPT_DIR/pcaps"
