@@ -9,33 +9,21 @@ env:
   LIBTINS_VERSION: v4.5
 
 jobs:
-  # Debian 12 and 13 builds run inside distro containers for ABI accuracy.
+  # Debian 13 build runs inside a distro container for ABI accuracy.
   # Steps run as root inside the container — no sudo needed.
   build-debian:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - distro: debian12
-            image: debian:bookworm
-            runner: ubuntu-24.04
-            arch: amd64
-            tarball: true
-          - distro: debian12
-            image: debian:bookworm
-            runner: ubuntu-24.04-arm
-            arch: arm64
-            tarball: true
           - distro: debian13
             image: debian:trixie
             runner: ubuntu-24.04
             arch: amd64
-            tarball: false
           - distro: debian13
             image: debian:trixie
             runner: ubuntu-24.04-arm
             arch: arm64
-            tarball: false
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     steps:
@@ -97,25 +85,6 @@ jobs:
         with:
           name: deb-${{ matrix.distro }}-${{ matrix.arch }}
           path: pping2_*.deb
-
-      - name: Build tarball
-        if: matrix.tarball
-        env:
-          VERSION: ${{ steps.ver.outputs.VERSION }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          STAGING="pping2-${VERSION}-linux-${ARCH}"
-          mkdir "$STAGING"
-          cp pping2 Makefile README.md clickhouse.md LICENSE "$STAGING/"
-          cp -r contrib "$STAGING/"
-          tar czf "pping2-${VERSION}-linux-${ARCH}.tar.gz" "$STAGING"
-
-      - name: Upload tarball
-        if: matrix.tarball
-        uses: actions/upload-artifact@v7
-        with:
-          name: tarball-linux-${{ matrix.arch }}
-          path: pping2-*-linux-*.tar.gz
 
   # Ubuntu 24.04 builds run natively (no container). Uses sudo.
   build-ubuntu:
@@ -350,5 +319,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --generate-notes \
             pping2_*.deb \
-            pping2-*-linux-*.tar.gz \
+            pping2-*-linux-*-musl-static.tar.gz \
             pping2-*-macos-*.tar.gz
