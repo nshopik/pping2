@@ -5,6 +5,34 @@ started at upstream commit
 [`6cc6a604`](https://github.com/pollere/pping/commit/6cc6a604916d29415bd2c8f51f8be8900f6c83c8).
 This is the first versioned release of the fork.
 
+## v1.1.2 — 2026-05-24
+
+### Added
+
+- Static musl aarch64 tarball (`pping2-<v>-linux-aarch64-musl-static.tar.gz`)
+  — drop-in binary with no shared-library or libc dependency. Targets
+  OpenWrt and other musl systems.
+- `--version` / `-V` flag. Version is baked into the binary at build time
+  (`git describe` → `VERSION` file → `unknown`).
+
+### Changed
+
+- LTO (`-flto=auto`) enabled in the default build. ~7% reduction in
+  per-packet cost on the reference bench (`-a hybrid`).
+- `.deb` now declares `libtins4.5` in `Depends:`, so
+  `sudo apt install ./pping2_<v>_<distro>_<arch>.deb` resolves libtins
+  automatically. The previous packages needed a separate
+  `apt install libtins4.5` before `dpkg -i`.
+- Release matrix drops Debian 12 (bookworm) — `libtins4.5` is not in the
+  bookworm repos. Supported targets: Debian 13 (trixie), Ubuntu 24.04 LTS
+  (noble), macOS arm64, and the static musl aarch64 tarball.
+
+### Fixed
+
+- Fall back to hostname when `getaddrinfo` returns a NULL `ai_canonname`
+  (node label in output could otherwise be empty).
+- Null-check `ifa_addr` in `localAddrOf`.
+
 ## v1.1.0 — 2026-05-12
 
 ### Changed

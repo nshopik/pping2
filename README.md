@@ -23,15 +23,16 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full list of changes.
 
 ### Debian / Ubuntu (recommended)
 
-Download the `.deb` for your distro from the
-[Releases](https://github.com/nshopik/pping2/releases) page, then:
+Built for Debian 13 (trixie) and Ubuntu 24.04 LTS (noble). Download the `.deb`
+from the [Releases](https://github.com/nshopik/pping2/releases) page, then:
 
 ```sh
-sudo dpkg -i pping2_<version>_<distro>_<arch>.deb
+sudo apt install ./pping2_<version>_<distro>_<arch>.deb
 ```
 
-`postinst` sets `cap_net_raw` on the binary and creates `/var/log/pping2/`
-owned by `nobody`. Edit `/etc/default/pping2` to set your interface, then:
+`apt` pulls `libtins4.5` and `libpcap0.8t64` automatically. `postinst` sets
+`cap_net_raw` on the binary and creates `/var/log/pping2/` owned by `nobody`.
+Edit `/etc/default/pping2` to set your interface, then:
 
 ```sh
 sudo systemctl enable --now pping2
@@ -39,12 +40,14 @@ sudo systemctl enable --now pping2
 
 ### From a binary tarball
 
-Download `pping2-<version>-linux-<arch>.tar.gz` (or the macOS variant) from
-[Releases](https://github.com/nshopik/pping2/releases), extract, then:
+Download `pping2-<version>-macos-<arch>.tar.gz` (or, on aarch64 Linux,
+`pping2-<version>-linux-aarch64-musl-static.tar.gz` for a fully static
+build) from [Releases](https://github.com/nshopik/pping2/releases), extract,
+then:
 
 ```sh
-tar xzf pping2-<version>-linux-amd64.tar.gz
-cd pping2-<version>-linux-amd64
+tar xzf pping2-<version>-macos-arm64.tar.gz
+cd pping2-<version>-macos-arm64
 sudo make install              # binary + setcap
 sudo make install-all          # binary + systemd + ClickHouse loader (Linux)
 ```
