@@ -329,12 +329,14 @@ static int64_t nextFlush;       // next stdout flush time (~uS)
 static inline void addTS(const TsKey& key, const tsInfo& ti)
 {
     // Below cap: try_emplace gives first-write-wins for free.
-    // At cap: count a *new* key as dropped; an existing key would be a no-op
-    // anyway so skip the insert. Storage is by-value, so the duplicate-key
-    // path can't leak (TODO #2 fix folded in).
+    // At cap: count the rejection and skip the insert. We deliberately do NOT
+    // disambiguate new-vs-existing keys here — the old `find()` cost a full
+    // 48-byte hash + bucket probe on every packet while saturated, just to
+    // refine a diagnostic counter. tsDropped now counts all packets rejected
+    // at cap (a duplicate key would have been a no-op insert anyway).
     if (tsTbl.size() < maxTSvals) {
         tsTbl.try_emplace(key, ti);
-    } else if (tsTbl.find(key) == tsTbl.end()) {
+    } else {
         ++tsDropped;
     }
 }
@@ -1096,6 +1098,13 @@ int main(int argc, char* const* argv)
         config.set_promisc_mode(false);
         config.set_snap_len(SNAP_LEN);
         config.set_timeout(250);
+        // Size the kernel capture ring. libpcap defaults to ~2MB, which at
+        // 10G line rate holds only a few thousand frames — any packet-loop
+        // stall (cleanUp scan, scheduler jitter, output burst) then overflows
+        // the ring and drops packets silently (counted by pcap_stats, not by
+        // pping). 16MB holds ~30k min-size frames, enough to ride out a stall.
+        // No effect on FileSniffer (pcap replay), so set unconditionally.
+        config.set_buffer_size(16 * 1024 * 1024);
 
         try {
             if (liveInp) {

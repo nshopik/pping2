@@ -22,6 +22,65 @@ Surfaced in the final review of the `seq-ack-rtt` branch. None block merge.
 
 - [ ] **Multi-interface support with per-row `interface` column.** Accept multiple `-i` flags (or comma-separated list), tag each row with the interface name, ship a templated systemd unit (`pping@.service`). Schema gains `interface LowCardinality(String)`; `pping_flows` ORDER BY may want to lead with `interface` for tenant-style queries.
 
+## Performance follow-ups
+
+Deferred from the 2026-05-30 Dream Team performance review (`cpp-pro` +
+`performance-engineer`). The three cheap wins from that review already landed
+(ring-buffer sizing, `addTS` cap-path single-lookup, `make pgo` target). The
+items below need a **1M+ pcap with realistic flow churn** before acting —
+≤200K fixtures hide hashmap and libtins cost, so any number from them is noise.
+
+- [ ] **`cleanUp()` is an O(N) stop-the-world scan.** `pping.cpp:710` walks all
+  of `tsTbl` (≤33.5M) and `flows` (≤67M) every `tsvalMaxAge` (10s). At cap that
+  touches gigabytes of node-based heap in one pass — during live capture the
+  packet loop is paused for the whole scan, and the kernel ring (now 16MB) drains
+  meanwhile. Candidate redesign: time-bucketed ring of maps, evict the oldest
+  bucket wholesale per tick (O(N/window) instead of O(N)). **Profile first:**
+  instrument `clock_gettime()` around the `cleanUp()` call on a 1M+ pcap; only
+  act if it's >5% of wall time.
+
+- [ ] **Open-addressing flat map for `flows` / `tsTbl`.** `pping.cpp:236-237`
+  use `std::unordered_map` (libstdc++ `_Prime_rehash_policy` → integer modulo per
+  lookup, node-per-entry → pointer-chase cache miss). A flat/open-addressing map
+  (`tsl::robin_map`, `ankerl::unordered_dense`) with power-of-2 sizing replaces
+  the modulo with an AND and stores entries inline. Highest ceiling, highest
+  risk. **Constraint:** storing `flowRec` by value breaks the `revFlowRec` raw
+  pointer on rehash — either keep `flowRec*` values (still one fewer modulo) or
+  pre-size to avoid rehash. Single-header dep into a single-file tool is a
+  judgement call. **Measure first:** `perf stat -e LLC-load-misses`; compare
+  `--mode seq` (0 tsTbl ops) vs `--mode ts` (2 tsTbl ops) to isolate the cost.
+  Full golden regression required — not on the tried-and-regressed list, but
+  adjacent to the v4-key-shrink that already cost 7.9%.
+
+- [ ] **`reserve()` both maps at startup — to a realistic estimate, NOT the cap.**
+  Reserving to `maxFlows`/`maxTSvals` would commit ~14GB up front (the review
+  agents both missed this). Reserve to expected concurrent flow count (low
+  millions) to skip early-growth rehash spikes without the memory blowup.
+
+- [ ] **`pkt.pdu()->size()` virtual PDU-tree walk.** `pping.cpp:581` recurses
+  the libtins PDU chain (virtual call per layer) for a byte count obtainable as
+  `14 + ntohs(ip->tot_len())` (v4) / `14 + 40 + ntohs(ipv6->payload_length())`
+  (v6). Mechanical change; small relative to hashmap cost. Confirm byte-count
+  semantics match the goldens (`-e`/`-a` byte fields).
+
+- [ ] **`fmtTimeDiff()` returns `std::string` (2 heap allocs/sample).**
+  `pping.cpp:357`, called from `emit()` human path only. Apply the `IpStr`
+  pattern (stack `char[]` struct returned by value). **Low value for the
+  production `-a` → ClickHouse pipeline:** `-a` sets `aggregateOutput`, which
+  gates out `emit()` entirely, so `fmtTimeDiff` never runs there. Only matters
+  for interactive human-mode output.
+
+- [ ] **`flowRec` layout: 7B internal pad, hot fields span 3 cache lines.**
+  `pping.cpp:184-228`. Reorder (doubles → pointer → uint32 → bools) to ~88B and
+  pull `tsCapable`/`classified` (read every packet at `pping.cpp:547`) into the
+  first cache line. Add a `static_assert` on `sizeof(flowRec)` after. Marginal
+  unless the working set pressures L1/L2 — **cachegrind first.**
+
+- [ ] **Per-flow `new`/`delete` churn.** `pping.cpp:524`/`756`. A `flowRec`
+  freelist pool would eliminate malloc traffic, but only worth it if new-flow
+  rate exceeds ~5% of pps (check `flowCnt` vs `pktCnt` in the summary). Measure
+  before building.
+
 ## Install / packaging follow-ups
 
 - [ ] **Tests for `--logfile` and SIGHUP reopen.** `test/test_cli.sh` doesn't cover the new flag. Add a check that `pping --logfile=/tmp/x.log -r test/pcaps/known.pcap` writes output to that path and produces the same content as plain stdout redirection. SIGHUP/rotation behavior is harder to test without live capture but a fork+kill+inode-comparison contrived test would work.

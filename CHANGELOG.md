@@ -5,6 +5,24 @@ started at upstream commit
 [`6cc6a604`](https://github.com/pollere/pping/commit/6cc6a604916d29415bd2c8f51f8be8900f6c83c8).
 This is the first versioned release of the fork.
 
+## Unreleased
+
+### Changed
+
+- Set the libpcap capture ring buffer to 16 MB (`set_buffer_size`). The
+  ~2 MB default holds only a few thousand frames at 10G line rate; a
+  packet-loop stall then overflows the ring and drops packets silently.
+  No effect on pcap replay.
+- `addTS` no longer does a second `tsTbl.find()` on the cap-rejection path.
+  `tsDropped` now counts all packets rejected at the `maxTSvals` cap rather
+  than only those with a previously-unseen key.
+
+### Added
+
+- `make pgo` — two-phase profile-guided build. Instruments, trains across
+  all three modes on `$BENCH_PCAP` (or `~/bench.pcap`), then rebuilds with
+  the profile. Refuses to train on the small synth fixtures.
+
 ## v1.1.2 — 2026-05-24
 
 ### Added

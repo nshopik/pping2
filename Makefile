@@ -84,10 +84,49 @@ test/unit_tests: test/unit_tests.cpp pping.cpp
 
 clean:
 	rm -f pping2 test/unit_tests
+	rm -rf pgo-data
 
 bench: pping2
 	@mkdir -p docs/superpowers/baselines
 	@./test/bench.sh | tee "docs/superpowers/baselines/$$(date -u +%Y-%m-%d)-bench-$$(git rev-parse --short HEAD).txt"
+
+# Profile-Guided Optimization. Two-phase: build an instrumented binary, run it
+# over a representative pcap to gather branch/edge counts, then rebuild using
+# that profile so GCC lays out the hot per-packet dispatch optimally.
+#
+# Training input resolves like test/bench.sh: $BENCH_PCAP, then ~/bench.pcap.
+# Refuses to train on the tiny synth fixtures — a profile gathered from a few
+# hundred packets would mis-train branch layout. Supply a 1M+ pcap with
+# realistic flow churn (the same input you bench with).
+#
+# Usage:
+#   make pgo                              # uses ~/bench.pcap
+#   BENCH_PCAP=/path/to/big.pcap make pgo
+#
+# The profile is gathered across all three modes so neither the TS nor the SEQ
+# hot path is starved of training data. -fprofile-correction tolerates the
+# slightly inconsistent counts that result from multiple training runs.
+PGO_DIR := pgo-data
+PGO_PCAP := $(or $(BENCH_PCAP),$(HOME)/bench.pcap)
+
+.PHONY: pgo
+pgo:
+	@test -f "$(PGO_PCAP)" || { \
+	    echo "ERROR: no training pcap at '$(PGO_PCAP)'."; \
+	    echo "Set BENCH_PCAP=/path/to/big.pcap (1M+ packets, realistic flow churn)."; \
+	    exit 1; }
+	@echo "PGO phase 1/2: building instrumented binary"
+	rm -rf $(PGO_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fprofile-generate=$(PGO_DIR) \
+	    -o pping2 pping.cpp $(LDFLAGS)
+	@echo "PGO phase 1/2: gathering profile from $(PGO_PCAP)"
+	./pping2 -q --mode hybrid -a -r "$(PGO_PCAP)" >/dev/null
+	./pping2 -q --mode ts     -m -r "$(PGO_PCAP)" >/dev/null
+	./pping2 -q --mode seq    -m -r "$(PGO_PCAP)" >/dev/null
+	@echo "PGO phase 2/2: rebuilding with profile"
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fprofile-use=$(PGO_DIR) -fprofile-correction \
+	    -o pping2 pping.cpp $(LDFLAGS)
+	@echo "PGO build complete. Profile data in $(PGO_DIR)/ (gitignored)."
 
 # Regenerate test fixtures from test/synth/. Requires scapy.
 pcaps:

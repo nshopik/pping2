@@ -1,6 +1,9 @@
 pping2
 test/unit_tests
 
+# PGO profile data (make pgo)
+pgo-data/
+
 # WSL/local libtins build prefix (CI builds its own copy)
 .libtins/
 
