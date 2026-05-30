@@ -9,6 +9,19 @@ This is the first versioned release of the fork.
 
 ### Changed
 
+- Replaced `std::unordered_map` with `ankerl::unordered_dense` (vendored
+  single-header) for the two hot maps `flows` and `tsTbl`. Output is
+  byte-identical. Interleaved 20-iter median ns/pkt on `~/bench.pcap`
+  (4M pkts, ~590K flows):
+
+  | mode | std | unordered_dense | Δ |
+  |---|---|---|---|
+  | -a hybrid | 730.2 | 650.4 | −10.9% |
+  | -m hybrid | 1087.1 | 946.8 | −12.9% |
+  | -e hybrid | 1493.8 | 1352.6 | −9.5% |
+
+  Real-kernel `perf stat` on `-a hybrid`: cache-misses 62.7M → 27.6M (−56%),
+  peak RSS 9880 → 9264 kB (−6%).
 - Set the libpcap capture ring buffer to 16 MB (`set_buffer_size`). The
   ~2 MB default holds only a few thousand frames at 10G line rate; a
   packet-loop stall then overflows the ring and drops packets silently.

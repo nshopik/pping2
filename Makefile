@@ -2,6 +2,7 @@
 # (typically /usr/local unless overridden when tins built)
 LIBTINS = $(HOME)/src/libtins
 CPPFLAGS += -I$(LIBTINS)/include
+CPPFLAGS += -Ithird_party
 LDFLAGS += -L$(LIBTINS)/lib -ltins -lpcap
 CXXFLAGS += -std=c++17 -g -O3 -Wall -flto=auto
 LDFLAGS  += -flto=auto

@@ -39,19 +39,6 @@ items below need a **1M+ pcap with realistic flow churn** before acting —
   instrument `clock_gettime()` around the `cleanUp()` call on a 1M+ pcap; only
   act if it's >5% of wall time.
 
-- [ ] **Open-addressing flat map for `flows` / `tsTbl`.** `pping.cpp:236-237`
-  use `std::unordered_map` (libstdc++ `_Prime_rehash_policy` → integer modulo per
-  lookup, node-per-entry → pointer-chase cache miss). A flat/open-addressing map
-  (`tsl::robin_map`, `ankerl::unordered_dense`) with power-of-2 sizing replaces
-  the modulo with an AND and stores entries inline. Highest ceiling, highest
-  risk. **Constraint:** storing `flowRec` by value breaks the `revFlowRec` raw
-  pointer on rehash — either keep `flowRec*` values (still one fewer modulo) or
-  pre-size to avoid rehash. Single-header dep into a single-file tool is a
-  judgement call. **Measure first:** `perf stat -e LLC-load-misses`; compare
-  `--mode seq` (0 tsTbl ops) vs `--mode ts` (2 tsTbl ops) to isolate the cost.
-  Full golden regression required — not on the tried-and-regressed list, but
-  adjacent to the v4-key-shrink that already cost 7.9%.
-
 - [ ] **`reserve()` both maps at startup — to a realistic estimate, NOT the cap.**
   Reserving to `maxFlows`/`maxTSvals` would commit ~14GB up front (the review
   agents both missed this). Reserve to expected concurrent flow count (low
