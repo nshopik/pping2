@@ -60,19 +60,17 @@ See **Compiling** below.
 
 ### CPU baseline
 
-The build targets **x86-64-v3** on amd64 (Intel Haswell ≥ 2013, AMD Excavator
-≥ 2015 — covers all server CPUs of the last decade) and **ARMv8-A + CRC**
-(`-march=armv8-a+crc`) on aarch64. The flow-table hash uses hardware CRC32C
-instructions (`_mm_crc32_u64` on x86, `__crc32cd` on ARM), so SSE4.2 / ARMv8
-CRC32 is required at compile time. The aarch64 `+crc` opt-in is needed because
-GCC's default `armv8-a` profile keeps the CRC extension off even though the
-ARMv8.0-A spec mandates it. This aligns with Ubuntu's direction on
-performance-sensitive packages, which have begun targeting x86-64-v3 rather
-than the default `amd64` (v1) baseline.
+Hardware CRC32C is a **compile-time requirement** — the flow-table hash uses
+`_mm_crc32_u64` (x86) / `__crc32cd` (ARM):
 
-For CPUs older than this, edit `-march=x86-64-v3` / `-march=armv8-a+crc` out
-of the Makefile and replace `CRC32Hash` with a software fallback — not
-supported out of the box.
+- **amd64:** `-march=x86-64-v3` — SSE4.2 (Intel Haswell ≥ 2013, AMD Excavator ≥ 2015)
+- **aarch64:** `-march=armv8-a+crc` — ARMv8 CRC32
+
+The aarch64 `+crc` opt-in is needed because GCC's default `armv8-a` profile
+keeps the CRC extension off even though the ARMv8.0-A spec mandates it.
+
+For older CPUs, edit `-march=...` out of the Makefile and replace `CRC32Hash`
+with a software fallback — not supported out of the box.
 
 ### Prerequisites
 

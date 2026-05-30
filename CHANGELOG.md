@@ -106,17 +106,17 @@ This is the first versioned release of the fork.
   stdout, and reopen on SIGHUP. Enables zero-copy atomic log rotation
   by external tools (`mv old new; kill -HUP $pid`). Without `--logfile`,
   behavior is unchanged.
-- Bundled systemd unit (`contrib/systemd/pping.service`) with
+- Bundled systemd unit (`contrib/systemd/pping2.service`) with
   `ExecReload=/bin/kill -HUP $MAINPID` for log rotation, and shared
-  environment file (`/etc/default/pping`). Single-interface in v1;
+  environment file (`/etc/default/pping2`). Single-interface in v1;
   multi-interface and per-row interface attribution will land together
   in a future release.
 - Bundled ClickHouse loader (`contrib/clickhouse/`) — batch-load script,
   cron entry, and `pping_flows` table schema matching `-a` output.
-  Loader rotates via atomic `mv` + `systemctl reload pping.service`.
+  Loader rotates via atomic `mv` + `systemctl reload pping2.service`.
   Two ingest paths: `clickhouse-client` (default) speaks the native TCP
   protocol; `curl` uses the HTTP interface and needs no extra packages
-  on the capture host. Selected via `PPING_INGEST` in `/etc/default/pping`.
+  on the capture host. Selected via `PPING_INGEST` in `/etc/default/pping2`.
 - Makefile `install`, `install-systemd`, `install-clickhouse`,
   `install-all` targets and matching `uninstall*` targets. `DESTDIR` and
   `PREFIX` honored for distro packagers; `setcap` is skipped with a
