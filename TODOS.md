@@ -30,15 +30,6 @@ Deferred from the 2026-05-30 Dream Team performance review (`cpp-pro` +
 items below need a **1M+ pcap with realistic flow churn** before acting —
 ≤200K fixtures hide hashmap and libtins cost, so any number from them is noise.
 
-- [ ] **`cleanUp()` is an O(N) stop-the-world scan.** `pping.cpp:710` walks all
-  of `tsTbl` (≤33.5M) and `flows` (≤67M) every `tsvalMaxAge` (10s). At cap that
-  touches gigabytes of node-based heap in one pass — during live capture the
-  packet loop is paused for the whole scan, and the kernel ring (now 16MB) drains
-  meanwhile. Candidate redesign: time-bucketed ring of maps, evict the oldest
-  bucket wholesale per tick (O(N/window) instead of O(N)). **Profile first:**
-  instrument `clock_gettime()` around the `cleanUp()` call on a 1M+ pcap; only
-  act if it's >5% of wall time.
-
 - [ ] **`reserve()` both maps at startup — to a realistic estimate, NOT the cap.**
   Reserving to `maxFlows`/`maxTSvals` would commit ~14GB up front (the review
   agents both missed this). Reserve to expected concurrent flow count (low
