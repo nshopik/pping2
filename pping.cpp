@@ -1248,6 +1248,42 @@ int main(int argc, char* const* argv)
         cleanUp(capTm, /*flush_all=*/true);
     }
 
+    // Live capture only: report cumulative kernel capture-loss stats once at
+    // shutdown. pping's tsDropped/flowsDropped counters are application-level
+    // rejections; these are packets the kernel dropped before pping ever saw
+    // them (capture-ring overflow), which biases measured RTT high because the
+    // first-TSval<->first-TSecr pairing is no longer guaranteed. pcap_stats is
+    // a no-op (returns -1) on a FileSniffer savefile, so guard on liveInp.
+    if (liveInp) {
+        // Value-initialize: libpcap only fills the fields it knows, and the
+        // struct carries extra fields on non-Linux ports.
+        struct pcap_stat ps{};
+        if (pcap_stats(snif->get_pcap_handle(), &ps) == 0) {
+            // Loss fraction = ps_drop / (ps_recv + ps_drop). On Linux + libpcap
+            // >=1.0 ps_recv excludes drops, so this denominator is exact; on
+            // older/non-Linux libpcap ps_recv may include drops and this
+            // under-reports. ps_recv/ps_drop are u_int -> promote to double or
+            // the ratio truncates to integer 0.
+            //
+            // ps_drop is kernel capture-ring overflow, cumulative since the
+            // handle was opened. With TPACKET_V3 block-mode rings the kernel
+            // updates it lazily (block granularity), so a sub-second microburst
+            // can lose packets without showing here -- "0 drop" is reassuring,
+            // not a guarantee. (Resets if the handle is ever re-opened; not done
+            // today.)
+            //
+            // ps_ifdrop (driver rx_dropped) is reported raw, NOT folded into the
+            // percentage: most Linux NIC drivers never increment it, so "0
+            // ifdrop" means "unreported", not "NIC kept up".
+            unsigned long long denom =
+                (unsigned long long)ps.ps_recv + ps.ps_drop;
+            double lossPct = denom ? 100.0 * ps.ps_drop / denom : 0.0;
+            fprintf(stderr,
+                    "capture: %u recv, %u drop, %u ifdrop (%.1f%% loss)\n",
+                    ps.ps_recv, ps.ps_drop, ps.ps_ifdrop, lossPct);
+        }
+    }
+
     // File-mode only: wall-clock measures CPU-bound replay throughput, which
     // is the useful benchmark number. Live capture is bounded by what arrives
     // on the wire, not by pping, so the same number would just describe the
