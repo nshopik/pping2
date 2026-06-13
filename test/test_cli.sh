@@ -108,6 +108,14 @@ else
     fail "help_version_banner" "expected first line to match '^pping2 <token>'; got '$HELP_LINE1'"
 fi
 
+# 12. file replay must NOT emit a capture-loss line (pcap_stats is live-only)
+CAP_OUT=$("$PPING" -r "$PCAP" 2>&1 >/dev/null)
+if echo "$CAP_OUT" | grep -q '^capture:'; then
+    fail "no_capture_line_in_file_mode" "file replay emitted a 'capture:' line: $CAP_OUT"
+else
+    pass "no_capture_line_in_file_mode"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo ""
 echo "test_cli: $PASS/$TOTAL checks passed"

@@ -35,6 +35,11 @@ This is the first versioned release of the fork.
 - `make pgo` — two-phase profile-guided build. Instruments, trains across
   all three modes on `$BENCH_PCAP` (or `~/bench.pcap`), then rebuilds with
   the profile. Refuses to train on the small synth fixtures.
+- Live capture prints a cumulative `capture: <recv> recv, <drop> drop,
+  <ifdrop> ifdrop (<x>% loss)` line to stderr at shutdown, from libpcap
+  `pcap_stats`. Surfaces kernel capture-ring loss (packets dropped before
+  pping sees them), which biases measured RTT high. No-op in pcap replay.
+  `ifdrop` is reported raw (most Linux NIC drivers never set it).
 
 ## v1.1.2 — 2026-05-24
 
