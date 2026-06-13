@@ -480,7 +480,6 @@ static void process_packet(const Packet& pkt)
         return;
     }
 
-    // FlowKey + IP/IPv6 selection (unchanged)
     FlowKey fk;
     const IP* ip;
     const IPv6* ipv6;
@@ -503,7 +502,6 @@ static void process_packet(const Packet& pkt)
     fk.sport = t_tcp->sport();
     fk.dport = t_tcp->dport();
 
-    // capture clock time (unchanged)
     if (offTm < 0) {
         offTm = static_cast<int64_t>(pkt.timestamp().seconds());
         startm = double(pkt.timestamp().microseconds()) * 1e-6;
@@ -600,7 +598,7 @@ static void process_packet(const Packet& pkt)
         (mode == Mode::HYBRID && fr->tsCapable);
 
     if (mode == Mode::TS && !fr->tsCapable) {
-        // Today's behavior in --mode ts: count and drop.
+        // --mode ts drops non-TS flows, counted as no_TS.
         no_TS++;
         return;
     }
@@ -609,7 +607,7 @@ static void process_packet(const Packet& pkt)
                 && std::memcmp(localIPBytes.data(), fk.dstIP.data(), 16) == 0;
 
     if (useTs) {
-        // Existing TS path: preserves the rcv_tsval / rcv_tsecr sanity checks.
+        // tsecr==0 is only valid on a SYN (no ECR to echo back yet).
         if (rcv_tsval == 0 || (rcv_tsecr == 0 && (t_tcp->flags() != TCP::SYN))) {
             return;
         }
@@ -1122,7 +1120,6 @@ int main(int argc, char* const* argv)
                 if (filtLocal) {
                     localIP = localAddrOf(fname);
                     if (localIP.empty()) {
-                        // couldn't get local ip addr
                         filtLocal = false;
                     } else {
                         // Pre-parse localIP into packed bytes so the per-packet

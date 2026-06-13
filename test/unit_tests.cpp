@@ -331,7 +331,7 @@ static void test_capacity_defaults()
 REGISTER_TEST(test_capacity_defaults);
 
 /* -------------------------------------------------------------------------
- * addTS / cleanUp — migrated to FlowKey/TsKey + tsInfo-by-value.
+ * addTS / cleanUp
  * ---------------------------------------------------------------------- */
 
 static void test_addTS()
