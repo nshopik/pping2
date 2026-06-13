@@ -6,6 +6,28 @@ Items deferred from the `/cso` security audit. Most are DoS / robustness, not di
 
 - `-f` BPF filter string concatenation (`pping.cpp:525`) — `-f` is from `argv` (trusted) and libpcap's filter compiler validates the result. Not exploitable.
 
+## Bugs / robustness
+
+- [ ] **Slow / hung Ctrl-C on idle or non-TCP links.** SIGINT can take seconds
+  to stop a live capture, and hangs *forever* on a link with no filter-matching
+  traffic (needs SIGKILL). Not WSL-specific — measured on bare-metal Linux
+  (jade): `lo` with no TCP never exits; `ens3` exits only when the next TCP
+  packet arrives (0.16–4.3s jitter); `lo` + TCP traffic exits in 0.08s. Root
+  cause: `handleSignal` only sets `stopRequested`, which the packet loop checks
+  at the top of each iteration — but libtins `BaseSniffer::next_packet()`
+  (`sniffer.cpp:163`) blocks in `pcap_loop(handle, 1, …)` until a packet matching
+  the default `tcp` filter arrives; the 250ms `set_timeout` does NOT make it
+  return on an idle link. So the flag is never re-checked until the next matching
+  packet (never, on a silent link). Fix: stash the handle in a global
+  (`g_pcapHandle = snif->get_pcap_handle()` after sniffer creation) and call
+  `pcap_breakloop(g_pcapHandle)` from `handleSignal` — `pcap_loop` then returns
+  `PCAP_ERROR_BREAK`, `next_packet()` returns null, the `SnifferIterator` ends,
+  and pping falls into the shutdown path (printing the new `capture:` line).
+  `pcap_breakloop` only sets a flag and is the documented stop idiom (libtins'
+  own `stop_sniff()` uses it), so it's safe from the handler — add an
+  async-signal-safety comment like the existing SIGHUP one. Own branch/PR;
+  security-relevant signal-handler change.
+
 ## SEQ/ACK feature follow-ups
 
 Surfaced in the final review of the `seq-ack-rtt` branch. None block merge.
