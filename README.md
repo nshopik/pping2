@@ -1,17 +1,17 @@
 # pping2
 
 _pping2_ measures TCP round-trip time by passively monitoring active
-connections — it doesn't inject traffic. It works on Linux, macOS, and BSD,
+connections, without injecting traffic. It works on Linux, macOS, and BSD,
 and handles flows from clients that omit the TCP timestamp option (Windows,
 middleboxes that strip it). Unlike per-endpoint tools like `ss`, pping2 can
-measure RTT at the sender, receiver, or anywhere on a connection's path —
-for example, an OpenWrt border router can monitor RTT of all traffic to and
+measure RTT at the sender, receiver, or anywhere on a connection's path.
+For example, an OpenWrt border router can monitor RTT of all traffic to and
 from the Internet.
 
 ## Key features
 
 - **Hybrid RTT measurement** — SEQ/ACK path covers flows without TCP timestamps
-  (Windows, stripped-TS middleboxes); `--mode hybrid` is the default.
+  (Windows, stripped-TS middleboxes).
 - **Aggregated output** (`-a`) — one row per flow per window, built for direct
   ClickHouse ingest.
 - **~2× throughput over upstream** — packed POD hot path, allocation-free IP
@@ -96,8 +96,8 @@ make
 make install
 ```
 
-(The static libtins library makes the pping2 binary more self-contained
-so it will run on systems that don't have libtins installed.)
+(Static libtins makes the binary self-contained, so it runs where libtins
+isn't installed.)
 
 ## Building
 
@@ -123,15 +123,14 @@ Each has a matching `uninstall*` target. `DESTDIR` and `PREFIX` are honored
 for distro packagers; `setcap` is skipped (with a warning) when `DESTDIR` is
 set so packaging postinst scripts can apply it. Installed scripts have their
 paths rewritten at install time, so `make install-all PREFIX=/usr` produces
-a coherent install (no hardcoded `/usr/local` references in the cron, unit,
-loader).
+correct paths (no hardcoded `/usr/local` in the cron, unit, loader).
 
 For the worked end-to-end example (pping2 → cron loader → ClickHouse), see
 [`clickhouse.md`](clickhouse.md).
 
 ### Running without installing
 
-If you'd rather not install, two ad-hoc options work:
+Two ad-hoc options skip installation:
 
 ```Shell
 sudo ./pping2 -i eth0                          # run as root
@@ -144,8 +143,7 @@ opening the socket, but starting unprivileged is simpler.
 
 ## Examples
 
-`pping2 -i <interface>` monitors TCP traffic on the given interface and reports
-each packet's RTT to stdout:
+`pping2 -i <interface>` reports each packet's RTT to stdout:
 
 ```Shell
 pping2 -i en0          # macOS
@@ -155,23 +153,21 @@ pping2 -i wlp2s0       # Linux
 `pping2 -r <pcapfile>` prints the RTT of TCP packets from a pcap captured with
 `tcpdump` or Wireshark.
 
-A few flags control capture duration, output format, and BPF filter. For
-example, to see the RTT of the next 100 TCP packets to/from Netflix or YouTube:
+A few flags control capture duration, output format, and BPF filter. To
+see the RTT of the next 100 TCP packets to/from Netflix or YouTube:
 
 ```Shell
 pping2 -i en0 -c 100 -f 'net 45.57 or 74.125'
 ```
 
-`pping2 -h`, `pping2 --help`, or just `pping2` describes all flags.
-
-pping2 outputs one line per RTT measurement. On a busy interface, redirect to
-a file or pipe to a summarization or plotting utility. The exact format is
-selected by `-m` (compact) or `-e` (extended); see below.
+On a busy interface, redirect output to a file or pipe to a summarization
+or plotting utility. Format is selected by `-m` (compact) or `-e`
+(extended); see below.
 
 ## Output formats
 
-Four formats are available. Each prints one line per RTT measurement (or
-per flow window in aggregate mode).
+Four formats. Each prints one line per RTT measurement (or per flow window
+in aggregate mode).
 
 ### Field reference
 
@@ -287,8 +283,8 @@ At 10 Gbit/s line rate each packet on the wire has a fixed per-packet budget
 ### Reference numbers
 
 Run the bench harness on your hardware (`make bench` writes a dated baseline
-under `docs/superpowers/baselines/`). For reference, on an Intel i7-12700F
-(Alder Lake, x86-64-v3), 4 M-packet pcap, 10 iterations median:
+under `docs/superpowers/baselines/`). On an Intel i7-12700F (Alder Lake,
+x86-64-v3), 4 M-packet pcap, 10 iterations median:
 
 | mode | ns/pkt | Mpps |
 | :--- | -----: | ---: |
