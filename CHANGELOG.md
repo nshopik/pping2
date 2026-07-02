@@ -7,6 +7,8 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
+## v1.1.3 — 2026-07-02
+
 ### Changed
 
 - Replaced `std::unordered_map` with `ankerl::unordered_dense` (vendored
