@@ -7,7 +7,7 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
-## v1.1.3 — 2026-07-02
+## v1.2.0 — 2026-07-02
 
 ### Changed
 
