@@ -208,9 +208,13 @@ install-clickhouse: check-install-vars
 	install -d $(DESTDIR)$(SHAREDIR)
 	install -m 0644 contrib/clickhouse/schema.sql \
 	    $(DESTDIR)$(SHAREDIR)/schema.sql
+	install -m 0644 contrib/clickhouse/ingest-user.sql \
+	    $(DESTDIR)$(SHAREDIR)/ingest-user.sql
 	@echo
 	@echo "Schema is at $(SHAREDIR)/schema.sql. Apply it with:"
 	@echo "  clickhouse-client < $(SHAREDIR)/schema.sql"
+	@echo "Write-only loader user is at $(SHAREDIR)/ingest-user.sql."
+	@echo "Edit the password, then apply it the same way."
 	@echo "Then set CH_ARGS in $(SYSCONFDIR)/default/pping2."
 
 install-all: check-install-vars
@@ -235,6 +239,7 @@ uninstall-clickhouse:
 	rm -f $(DESTDIR)$(PREFIX)/bin/pping2-load.sh
 	rm -f $(DESTDIR)$(SYSCONFDIR)/cron.d/pping2-load
 	rm -f $(DESTDIR)$(SHAREDIR)/schema.sql
+	rm -f $(DESTDIR)$(SHAREDIR)/ingest-user.sql
 	rmdir --ignore-fail-on-non-empty $(DESTDIR)$(SHAREDIR) 2>/dev/null || true
 	# /etc/default/pping2 and any *.load files are intentionally left in place
 

@@ -1,0 +1,15 @@
+# Example systemd override to run pping2 inside an existing network
+# namespace instead of the host's default namespace.
+#
+# Install as a drop-in (do NOT copy over pping2.service itself):
+#   sudo systemctl edit pping2.service
+# paste the [Service] block below, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl restart pping2
+#
+# Requires systemd >= 240. The target namespace must already exist
+# (e.g. `ip netns add service`) and PPING_IFACE in /etc/default/pping2
+# must name an interface inside that namespace, not the host's.
+
+[Service]
+NetworkNamespacePath=/run/netns/service

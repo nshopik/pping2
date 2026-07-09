@@ -13,6 +13,7 @@ On a Debian-flavored host with pping2 built and `clickhouse-client` available:
 sudo make install-all
 sudo $EDITOR /etc/default/pping2        # set PPING_IFACE and CH_ARGS
 clickhouse-client < /usr/local/share/pping2/schema.sql
+clickhouse-client < /usr/local/share/pping2/ingest-user.sql   # edit password first
 sudo systemctl enable --now pping2
 ```
 
@@ -29,6 +30,7 @@ That's the entire setup. Within a minute the cron loader picks up
 | `/usr/local/bin/pping2-load.sh` | `contrib/clickhouse/` | cron-driven batch loader |
 | `/etc/cron.d/pping2-load` | `contrib/clickhouse/` | runs the loader every minute |
 | `/usr/local/share/pping2/schema.sql` | `contrib/clickhouse/` | reference schema (apply manually) |
+| `/usr/local/share/pping2/ingest-user.sql` | `contrib/clickhouse/` | write-only loader user (apply manually) |
 | `/var/log/pping2/` | `make install-systemd` | log dir, owned by `nobody` so the daemon can recreate the file on SIGHUP |
 
 `make uninstall-all` removes everything except `/etc/default/pping2` (your
@@ -131,6 +133,17 @@ TTL toDateTime(timestamp) + toIntervalDay(30);
 
 `node` and `tag` are `LowCardinality(String)` — both have small distinct-value
 sets and benefit from the dictionary encoding.
+
+## Ingest user
+
+`contrib/clickhouse/ingest-user.sql` creates a `pping2` user with `INSERT`
+on `pping_flows` only — no `SELECT`, no DDL, no other table or database.
+Edit the password before applying, then point `CH_ARGS`/`CH_AUTH` at it:
+
+```sql
+CREATE USER IF NOT EXISTS pping2 IDENTIFIED WITH sha256_password BY 'CHANGE_ME';
+GRANT INSERT ON pping_flows TO pping2;
+```
 
 ## Alternative: Vector
 
