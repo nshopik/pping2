@@ -5,8 +5,16 @@ case "$1" in
     configure)
         setcap cap_net_raw+ep /usr/bin/pping2
 
+        # Dedicated system user, not the shared `nobody` UID — systemd
+        # warns on `nobody` (collides with NFS's anonymous UID and any
+        # other service also confined to it).
+        if ! getent passwd pping2 >/dev/null; then
+            adduser --system --group --no-create-home \
+                --shell /usr/sbin/nologin pping2
+        fi
+
         mkdir -p /var/log/pping2
-        chown "nobody:$(id -gn nobody)" /var/log/pping2
+        chown pping2:pping2 /var/log/pping2
 
         # /etc/default/pping2 may hold ClickHouse credentials in CH_AUTH or
         # CH_ARGS. Older pping2 packages shipped this conffile as 0644, and

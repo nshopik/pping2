@@ -18,13 +18,17 @@ Restart=always
 RestartSec=5
 SuccessExitStatus=143
 
-# Run as nobody from the start. pping2 used to launch as root and call
-# dropPrivileges() after opening its packet socket; that path is still
-# the fallback for manual `sudo ./pping2 -i eth0` invocations, but under
-# systemd we hand it cap_net_raw directly via AmbientCapabilities, skip
-# the root window, and shrink the blast radius of any libtins parse-time
-# bug to whatever nobody can touch.
-User=nobody
+# Run as a dedicated system user from the start. pping2 used to launch as
+# root and call dropPrivileges() after opening its packet socket; that path
+# is still the fallback for manual `sudo ./pping2 -i eth0` invocations, but
+# under systemd we hand it cap_net_raw directly via AmbientCapabilities and
+# skip the root window. A dedicated `pping2` user (not the shared `nobody`
+# UID) keeps this confinement from overlapping with NFS's anonymous UID or
+# any other service that also runs as `nobody` — systemd warns on `nobody`
+# for exactly this reason. `make install-systemd` / the .deb postinst create
+# the user.
+User=pping2
+Group=pping2
 AmbientCapabilities=CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_RAW
 NoNewPrivileges=true

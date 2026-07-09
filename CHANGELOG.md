@@ -15,6 +15,16 @@ This is the first versioned release of the fork.
   (`contrib/systemd/pping2-netns-override.conf.example`) for running
   pping2 inside an existing network namespace via `NetworkNamespacePath=`.
 
+### Changed
+
+- **Breaking:** `pping2.service` now runs as a dedicated `pping2` system
+  user/group instead of the shared `nobody` UID (systemd flags `nobody` as
+  unsafe — it collides with NFS's anonymous UID and any other service also
+  confined to it). `make install-systemd` and the `.deb` postinst create
+  the user and chown `/var/log/pping2` to it. Hosts upgrading in place
+  need `/var/log/pping2` re-chowned; the postinst/Makefile handle this
+  automatically on install/upgrade.
+
 ## v1.2.1 — 2026-07-09
 
 ### Added

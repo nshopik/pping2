@@ -27,10 +27,10 @@ PPING_FLAGS=-a
 # ClickHouse loader). pping2 opens this path with --logfile and reopens it
 # on SIGHUP, so external tools can rotate the file atomically.
 #
-# The directory must be writable by the user pping2 drops to (default
-# `nobody`); `make install-systemd` creates /var/log/pping2/ owned by
-# `nobody` for this reason. Putting the file directly under /var/log/
-# would prevent pping2 from recreating it on SIGHUP after rotation.
+# The directory must be writable by the `pping2` system user the unit runs
+# as; `make install-systemd` creates /var/log/pping2/ owned by `pping2` for
+# this reason. Putting the file directly under /var/log/ would prevent
+# pping2 from recreating it on SIGHUP after rotation.
 PPING_LOGFILE=/var/log/pping2/pping2.log
 
 # --- ClickHouse loader settings (used by /usr/local/bin/pping2-load.sh) ---

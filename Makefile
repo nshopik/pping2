@@ -180,17 +180,29 @@ install-systemd: check-install-vars
 	    install -m 0640 contrib/systemd/pping2.default \
 	        $(DESTDIR)$(SYSCONFDIR)/default/pping2; \
 	fi
-	# pping2 drops to `nobody` after opening the packet socket, so it
-	# needs a directory it can recreate the logfile in on SIGHUP.
+	# The unit runs as a dedicated `pping2` system user (not the shared
+	# `nobody` UID — systemd warns on that, and it collides with NFS's
+	# anonymous UID and any other service also confined to `nobody`).
+	if [ -z "$(DESTDIR)" ]; then \
+	    if ! getent passwd pping2 >/dev/null; then \
+	        adduser --system --group --no-create-home \
+	            --shell /usr/sbin/nologin pping2; \
+	    fi; \
+	else \
+	    echo ""; \
+	    echo "WARNING: user creation skipped because DESTDIR is set."; \
+	    echo "Apply in your packaging postinst (or run manually):"; \
+	    echo '  adduser --system --group --no-create-home --shell /usr/sbin/nologin pping2'; \
+	fi
 	install -d $(DESTDIR)/var/log/pping2
 	if [ -z "$(DESTDIR)" ]; then \
-	    chown nobody:`id -gn nobody` /var/log/pping2; \
+	    chown pping2:pping2 /var/log/pping2; \
 	    systemctl daemon-reload; \
 	else \
 	    echo ""; \
 	    echo "WARNING: chown skipped because DESTDIR is set."; \
 	    echo "Apply in your packaging postinst (or run manually):"; \
-	    echo '  chown nobody:$$(id -gn nobody) /var/log/pping2'; \
+	    echo '  chown pping2:pping2 /var/log/pping2'; \
 	fi
 	@echo
 	@echo "Edit $(SYSCONFDIR)/default/pping2 (set PPING_IFACE), then:"

@@ -31,7 +31,7 @@ That's the entire setup. Within a minute the cron loader picks up
 | `/etc/cron.d/pping2-load` | `contrib/clickhouse/` | runs the loader every minute |
 | `/usr/local/share/pping2/schema.sql` | `contrib/clickhouse/` | reference schema (apply manually) |
 | `/usr/local/share/pping2/ingest-user.sql` | `contrib/clickhouse/` | write-only loader user (apply manually) |
-| `/var/log/pping2/` | `make install-systemd` | log dir, owned by `nobody` so the daemon can recreate the file on SIGHUP |
+| `/var/log/pping2/` | `make install-systemd` | log dir, owned by the `pping2` system user so the daemon can recreate the file on SIGHUP |
 
 `make uninstall-all` removes everything except `/etc/default/pping2` (your
 edited config) and `/var/log/pping2/pping2.log` (your data).
@@ -43,7 +43,7 @@ Three settings you must touch, two you might:
 ```sh
 PPING_IFACE=eth0                       # required; single interface only
 PPING_FLAGS=-a                         # default: aggregate mode (recommended)
-PPING_LOGFILE=/var/log/pping2/pping2.log # default; dir must be writable by `nobody`
+PPING_LOGFILE=/var/log/pping2/pping2.log # default; dir must be writable by the `pping2` user
 PPING_TABLE=pping_flows                # default; only change if you renamed
 PPING_INGEST=clickhouse-client         # or 'curl' — see below
 
