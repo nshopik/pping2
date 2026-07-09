@@ -24,6 +24,9 @@ This is the first versioned release of the fork.
   the user and chown `/var/log/pping2` to it. Hosts upgrading in place
   need `/var/log/pping2` re-chowned; the postinst/Makefile handle this
   automatically on install/upgrade.
+- `pping2-load.sh` now retries a stale `.load` file left by a failed
+  ingest on every cron tick instead of blocking forever until an operator
+  clears it by hand.
 
 ## v1.2.1 — 2026-07-09
 

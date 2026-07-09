@@ -88,8 +88,9 @@ re-reads the env file every minute).
 open fd stays valid on the renamed inode and no rows are lost. `systemctl
 reload` then sends SIGHUP; pping2 reopens its `--logfile` path on the next
 packet-loop tick, capped at libtins's 250ms pcap timeout. On ingest failure
-the `.load` file persists; the next minute's run sees it at the top and
-exits, preserving data until ClickHouse is reachable again.
+the `.load` file persists; the next minute's run retries ingesting it
+before touching the current logfile, so a transient ClickHouse outage
+self-heals without an operator clearing the file by hand.
 
 ## Tuning the load
 

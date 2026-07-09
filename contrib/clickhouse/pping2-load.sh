@@ -33,23 +33,6 @@ LOADFILE="${LOGFILE}.load"
 TABLE="${PPING_TABLE:-pping_flows}"
 INGEST="${PPING_INGEST:-clickhouse-client}"
 
-# Previous load failed: don't rotate again, just skip. Warn loudly so a
-# stuck .load (e.g. CH unreachable, bad CH_ARGS) is visible in syslog/journal
-# instead of accumulating silently. Checked before LOGFILE so even a quiet
-# pping2 (no new rows) still surfaces the stuck file once a minute.
-if [ -f "$LOADFILE" ]; then
-    log warning "$LOADFILE present from previous run; skipping ingest until it is resolved"
-    exit 0
-fi
-
-[ -s "$LOGFILE" ] || exit 0    # nothing new to load (file missing or empty); silent — normal case
-
-mv "$LOGFILE" "$LOADFILE"
-if ! systemctl reload pping2.service; then
-    log err "systemctl reload pping2 failed; pping2 is still writing to $LOADFILE — aborting load to preserve data"
-    exit 1
-fi
-
 ingest_via_clickhouse_client() {
     tr ' ' '\t' < "$LOADFILE" \
       | clickhouse-client $CH_ARGS --query="INSERT INTO ${TABLE} FORMAT TSV"
@@ -79,7 +62,33 @@ esac
 # (e.g. "Code: 209. DB::NetException: Connection refused" from
 # clickhouse-client, or curl's resolve/SSL errors) reaches syslog/journal.
 # Process substitution requires bash, which the shebang already mandates.
-if "$ingest_fn" 2> >(logger -s -t pping2-load -p daemon.err); then
+ingest() {
+    "$ingest_fn" 2> >(logger -s -t pping2-load -p daemon.err)
+}
+
+# Previous run's ingest failed and left $LOADFILE behind (e.g. CH was
+# unreachable). Retry it now instead of blocking forever until an operator
+# steps in — checked before LOGFILE so even a quiet pping2 (no new rows)
+# still retries the stuck file once a minute.
+if [ -f "$LOADFILE" ]; then
+    log warning "$LOADFILE present from previous run; retrying ingest"
+    if ingest; then
+        rm "$LOADFILE"
+    else
+        log err "$INGEST retry of $LOADFILE failed; preserving for next run"
+        exit 1
+    fi
+fi
+
+[ -s "$LOGFILE" ] || exit 0    # nothing new to load (file missing or empty); silent — normal case
+
+mv "$LOGFILE" "$LOADFILE"
+if ! systemctl reload pping2.service; then
+    log err "systemctl reload pping2 failed; pping2 is still writing to $LOADFILE — aborting load to preserve data"
+    exit 1
+fi
+
+if ingest; then
     rm "$LOADFILE"
 else
     log err "$INGEST ingest failed; preserving $LOADFILE for next run"
