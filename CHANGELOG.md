@@ -7,6 +7,8 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
+## v1.2.1 — 2026-07-09
+
 ### Added
 
 - **Debian 12 (bookworm) `.deb` packages** (amd64, arm64), libtins linked
