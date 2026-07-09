@@ -7,6 +7,8 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
+## v1.2.2 — 2026-07-09
+
 ### Added
 
 - **`PPING_FILTER` knob** in `/etc/default/pping2` — a pcap capture filter
