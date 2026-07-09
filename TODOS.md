@@ -81,6 +81,28 @@ items below need a **1M+ pcap with realistic flow churn** before acting —
   rate exceeds ~5% of pps (check `flowCnt` vs `pktCnt` in the summary). Measure
   before building.
 
+## Security / fuzzing follow-ups
+
+- [ ] **libFuzzer+ASan harness for the packet-parse chain.** pping is a
+  passive tap parsing untrusted wire traffic via libtins; hardening
+  (PIE/RELRO/stack-protector) is already in place but the parser itself is
+  unverified. Harness must call `Packet::from_raw()` (or PDU ctor) directly
+  on raw bytes, bypassing `Sniffer`'s own filtering, then feed the result
+  into `process_packet` — fuzzing only up to `Sniffer` would miss it, since
+  `Sniffer` already drops malformed packets before they reach `process_packet`
+  (see `docs/superpowers/` libtins-wrap note). Covers both libtins' own PDU
+  parsing and pping's downstream trust points that assume libtins-reported
+  sizes/pointers are consistent: `pping.cpp:559-561` (TSOPT `memcpy` gated
+  only by `data_size() >= 8`) and `pping.cpp:179-182`
+  (`tcp_payload_len`/`inner_pdu()->size()`). `seq_lt`/`seq_geq`
+  (`pping.cpp:171-176`) are pure arithmetic, already unit-tested, no fuzz
+  value there. Seed corpus from existing `test/` pcap fixtures. Open before
+  starting: build-system hook (separate CMake/Makefile target vs. standalone
+  script), CI cadence (every push vs. nightly/manual — libFuzzer runs are
+  long-lived, not a per-PR gate), UBSan alongside ASan, and whether AFL++ is
+  worth adding later for deeper corpus-driven coverage. Prefer libFuzzer+ASan
+  first (simpler CI integration).
+
 ## Install / packaging follow-ups
 
 - [ ] **Tests for `--logfile` and SIGHUP reopen.** `test/test_cli.sh` doesn't cover the new flag. Add a check that `pping --logfile=/tmp/x.log -r test/pcaps/known.pcap` writes output to that path and produces the same content as plain stdout redirection. SIGHUP/rotation behavior is harder to test without live capture but a fork+kill+inode-comparison contrived test would work.

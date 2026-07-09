@@ -7,6 +7,11 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
+### Added
+
+- **Debian 12 (bookworm) `.deb` packages** (amd64, arm64), libtins linked
+  statically since bookworm has no libtins 4.5 package.
+
 ## v1.2.0 — 2026-07-02
 
 ### Changed
