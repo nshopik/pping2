@@ -285,7 +285,7 @@ jobs:
           echo "OK cap_net_raw applied"
           ls -ld /var/log/pping2
           ownr=$(stat -c '%U' /var/log/pping2)
-          [ "$ownr" = "nobody" ] || { echo "FAIL: /var/log/pping2 owner=$ownr (want nobody)"; exit 1; }
+          [ "$ownr" = "pping2" ] || { echo "FAIL: /var/log/pping2 owner=$ownr (want pping2)"; exit 1; }
           echo "OK /var/log/pping2 owner=$ownr"
 
       - name: Verify pping2.service hardening directives
@@ -295,7 +295,8 @@ jobs:
         run: |
           set -eu
           systemctl cat pping2.service | tee /tmp/pping2.unit
-          for prop in 'User=nobody' \
+          for prop in 'User=pping2' \
+                      'Group=pping2' \
                       'AmbientCapabilities=CAP_NET_RAW' \
                       'CapabilityBoundingSet=CAP_NET_RAW' \
                       'NoNewPrivileges=true' \
@@ -312,8 +313,8 @@ jobs:
           # so systemd ignored it" — `cat` would still show the typo while
           # `show` would report the default value.
           resolved_user=$(systemctl show pping2.service --property=User --value)
-          [ "$resolved_user" = "nobody" ] \
-              || { echo "FAIL: systemd resolved User=$resolved_user (want nobody)"; exit 1; }
+          [ "$resolved_user" = "pping2" ] \
+              || { echo "FAIL: systemd resolved User=$resolved_user (want pping2)"; exit 1; }
           echo "OK systemd resolved pping2.service User=$resolved_user"
 
       - name: Remove .deb (clean exit)
