@@ -10,7 +10,12 @@ StartLimitBurst=5
 
 [Service]
 EnvironmentFile=/etc/default/pping2
-ExecStart=/usr/local/bin/pping2 --logfile=${PPING_LOGFILE} ${PPING_FLAGS} -i ${PPING_IFACE}
+# Wrapped in `sh -c` so PPING_FILTER can carry a BPF expression with spaces
+# (e.g. `port 53`). systemd word-splits a bare ${VAR} in ExecStart, which
+# would shatter a quoted filter; the shell honors the quotes instead. `exec`
+# hands the PID (and the ambient CAP_NET_RAW) straight to pping2 — no lingering
+# shell. PPING_FLAGS stays unquoted on purpose so multi-flag values still split.
+ExecStart=/bin/sh -c 'exec /usr/local/bin/pping2 --logfile="$PPING_LOGFILE" $PPING_FLAGS ${PPING_FILTER:+-f "$PPING_FILTER"} -i "$PPING_IFACE"'
 ExecReload=/bin/kill -HUP $MAINPID
 StandardOutput=journal
 StandardError=journal

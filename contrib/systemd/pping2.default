@@ -23,6 +23,16 @@ PPING_IFACE=eth0
 # for the full flag list.
 PPING_FLAGS=-a
 
+# BPF capture filter (pcap syntax). Unlike PPING_FLAGS this MAY contain spaces
+# — the unit passes it through `sh -c` so quoting is preserved. pping2 ANDs it
+# onto its built-in `tcp` base filter, so `port 53` captures TCP/53 only.
+# pping measures RTT from TCP timestamps/SEQ, so only TCP is ever captured;
+# UDP DNS carries no RTT signal and is filtered out regardless.
+#   PPING_FILTER="port 53"          # DNS (TCP/53: DoT fallback, AXFR, large answers)
+#   PPING_FILTER="port 53 or port 853"  # DNS + DoT
+# Empty (default) captures all TCP.
+PPING_FILTER=
+
 # Path pping2 writes its output to (used by both the systemd unit and the
 # ClickHouse loader). pping2 opens this path with --logfile and reopens it
 # on SIGHUP, so external tools can rotate the file atomically.

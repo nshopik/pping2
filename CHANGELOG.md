@@ -9,6 +9,9 @@ This is the first versioned release of the fork.
 
 ### Added
 
+- **`PPING_FILTER` knob** in `/etc/default/pping2` — a pcap capture filter
+  (may contain spaces; ANDed onto the built-in `tcp` filter). Empty by
+  default (all TCP); set `port 53` to scope capture to DNS-over-TCP.
 - ClickHouse write-only ingest user (`contrib/clickhouse/ingest-user.sql`),
   wired into `make install-clickhouse`.
 - systemd netns override example
