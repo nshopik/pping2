@@ -23,14 +23,17 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the full list of changes.
 
 ### Debian / Ubuntu (recommended)
 
-Built for Debian 13 (trixie) and Ubuntu 24.04 LTS (noble). Download the `.deb`
-from the [Releases](https://github.com/nshopik/pping2/releases) page, then:
+Built for Debian 13 (trixie), Debian 12 (bookworm), and Ubuntu 24.04 LTS
+(noble). Download the `.deb` from the
+[Releases](https://github.com/nshopik/pping2/releases) page, then:
 
 ```sh
 sudo apt install ./pping2_<version>_<distro>_<arch>.deb
 ```
 
-`apt` pulls `libtins4.5` and `libpcap0.8t64` automatically. `postinst` sets
+`apt` pulls the runtime libraries automatically. The debian12 package links
+libtins statically (bookworm ships 4.4, not the 4.5 pping2 uses); the others
+depend on the distro's `libtins`/`libpcap` packages. `postinst` sets
 `cap_net_raw` on the binary and creates `/var/log/pping2/` owned by `nobody`.
 Edit `/etc/default/pping2` to set your interface, then:
 

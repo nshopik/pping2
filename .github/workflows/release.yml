@@ -9,8 +9,15 @@ env:
   LIBTINS_VERSION: v4.5
 
 jobs:
-  # Debian 13 build runs inside a distro container for ABI accuracy.
+  # Debian builds run inside distro containers for ABI accuracy.
   # Steps run as root inside the container — no sudo needed.
+  #
+  # debian13 links the pinned libtins dynamically and depends on the distro
+  # package (trixie ships the same 4.5). debian12 has no libtins 4.5 package
+  # (bookworm ships 4.4), so libtins is linked statically into the binary:
+  # BUILD_SHARED=0, PIC on (the executable is PIE, non-PIC archives fail to
+  # link), WPA2 off so the archive pulls no libcrypto (pping2 uses only core
+  # libtins; matches the musl-static leg).
   build-debian:
     strategy:
       fail-fast: false
@@ -20,10 +27,26 @@ jobs:
             image: debian:trixie
             runner: ubuntu-24.04
             arch: amd64
+            depends: "libtins4.5, libpcap0.8t64, libstdc++6"
+            libtins_flags: ""
           - distro: debian13
             image: debian:trixie
             runner: ubuntu-24.04-arm
             arch: arm64
+            depends: "libtins4.5, libpcap0.8t64, libstdc++6"
+            libtins_flags: ""
+          - distro: debian12
+            image: debian:bookworm
+            runner: ubuntu-24.04
+            arch: amd64
+            depends: "libpcap0.8, libstdc++6"
+            libtins_flags: "-DLIBTINS_BUILD_SHARED=0 -DLIBTINS_ENABLE_WPA2=0 -DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+          - distro: debian12
+            image: debian:bookworm
+            runner: ubuntu-24.04-arm
+            arch: arm64
+            depends: "libpcap0.8, libstdc++6"
+            libtins_flags: "-DLIBTINS_BUILD_SHARED=0 -DLIBTINS_ENABLE_WPA2=0 -DCMAKE_POSITION_INDEPENDENT_CODE=ON"
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     steps:
@@ -55,6 +78,7 @@ jobs:
           cmake -S /tmp/libtins-src -B /tmp/libtins-build \
             -DCMAKE_BUILD_TYPE=Release \
             -DLIBTINS_ENABLE_PCAP=1 \
+            ${{ matrix.libtins_flags }} \
             -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/.libtins"
           cmake --build /tmp/libtins-build --parallel "$(nproc)"
           cmake --install /tmp/libtins-build
@@ -66,6 +90,7 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.VERSION }}
           ARCH: ${{ matrix.arch }}
+          DEPENDS: ${{ matrix.depends }}
         run: |
           PKGDIR=$(mktemp -d)
           make install-all DESTDIR="$PKGDIR" PREFIX=/usr SYSCONFDIR=/etc
@@ -73,6 +98,7 @@ jobs:
           sed \
             -e "s/^Version: .*/Version: ${VERSION}/" \
             -e "s/^Architecture: .*/Architecture: ${ARCH}/" \
+            -e "s/^Depends: .*/Depends: ${DEPENDS}/" \
             packaging/debian/control > "$PKGDIR/DEBIAN/control"
           install -m 0755 packaging/debian/postinst "$PKGDIR/DEBIAN/postinst"
           install -m 0755 packaging/debian/prerm    "$PKGDIR/DEBIAN/prerm"
