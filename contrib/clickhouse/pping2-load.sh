@@ -88,6 +88,28 @@ if ! systemctl reload pping2.service; then
     exit 1
 fi
 
+# Fence the rotation against pping2's block-buffered stdout. `systemctl
+# reload` only sends SIGHUP and returns; pping2 reopens on its next
+# packet-loop iteration, and reopenLogfile() fflush()es the tail of its
+# buffer to $LOADFILE (the old inode) *before* open()ing the fresh
+# O_CREAT'd $LOGFILE. Since printf writes whole records, that fflush lands
+# on a record boundary. So $LOGFILE reappearing is the signal that
+# $LOADFILE is fully flushed and newline-terminated. Ingest before that and
+# the tail is a partial 4KB-buffer flush cut mid-record — ClickHouse then
+# rejects the whole batch with "Cannot parse input: expected '\t' at end of
+# stream". Wait up to ~3s: a busy node reopens in ms (the first check runs
+# before any sleep), and a truly idle node has no new data to tear anyway —
+# its $LOADFILE is just retried next run.
+reopened=false
+for _ in $(seq 1 6); do
+    [ -e "$LOGFILE" ] && { reopened=true; break; }
+    sleep 0.5
+done
+if [ "$reopened" != true ]; then
+    log err "pping2 did not reopen $LOGFILE within 3s; $LOADFILE may be mid-flush — preserving for next run"
+    exit 1
+fi
+
 if ingest; then
     rm "$LOADFILE"
 else

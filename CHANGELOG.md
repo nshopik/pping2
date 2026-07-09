@@ -7,6 +7,13 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
+### Fixed
+
+- **ClickHouse loader rotation race** — `pping2-load.sh` waits for pping2 to
+  reopen its logfile before ingesting the rotated `.load`, fixing
+  intermittent batch rejections (`Cannot parse input: expected '\t' at end
+  of stream`) when the read raced pping2's buffered flush.
+
 ## v1.2.2 — 2026-07-09
 
 ### Added
