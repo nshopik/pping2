@@ -7,6 +7,14 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
+### Added
+
+- ClickHouse write-only ingest user (`contrib/clickhouse/ingest-user.sql`),
+  wired into `make install-clickhouse`.
+- systemd netns override example
+  (`contrib/systemd/pping2-netns-override.conf.example`) for running
+  pping2 inside an existing network namespace via `NetworkNamespacePath=`.
+
 ## v1.2.1 — 2026-07-09
 
 ### Added
