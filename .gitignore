@@ -7,10 +7,14 @@ pgo-data/
 # WSL/local libtins build prefix (CI builds its own copy)
 .libtins/
 
+# Machine-specific clang-tidy build config (hand-written, see Makefile flags)
+compile_commands.json
+
 # Local agent state — not part of the project
 CLAUDE.md
 .claude/
 docs/superpowers/
+docs/grafana/
 .gstack/
 
 # Python cache from test/synth/

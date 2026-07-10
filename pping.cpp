@@ -807,7 +807,7 @@ static std::string getFQDN()
 // XXX since an interface can have multiple addresses, both IP4 and IP6,
 // this should really create a set of all of them and later test for
 // membership. But for now we just take the first IP4 address.
-static std::string localAddrOf(const std::string ifname)
+static std::string localAddrOf(const std::string& ifname)
 {
     std::string local{};
     struct ifaddrs* ifap;
