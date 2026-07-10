@@ -1,21 +1,16 @@
 #!/bin/bash
 # Batch-load pping2's log file into ClickHouse. Driven by /etc/cron.d/pping2-load.
 #
-# Rotation is fast and zero-copy: mv is atomic at the dirent level (same fs);
-# pping2 holds an O_APPEND fd on the original inode (now at $LOADFILE). We
-# then `systemctl reload pping2` which sends SIGHUP through to pping2, and it
-# reopens its --logfile path — which now points to a fresh empty file. Old
-# data is in $LOADFILE; new data accumulates in $LOGFILE.
+# Rotation: mv $LOGFILE → $LOADFILE (atomic, same fs), then SIGHUP pping2 via
+# `systemctl reload` so it reopens --logfile at a fresh empty $LOGFILE. Old
+# data ingests from $LOADFILE; new data accumulates in $LOGFILE.
 #
-# Two ingest paths: clickhouse-client (default) and curl (HTTP interface).
-# See /etc/default/pping2 for configuration.
+# Two ingest paths: clickhouse-client (default) and curl. Config in
+# /etc/default/pping2.
 set -euo pipefail
 
-# All diagnostic output goes through `logger -s` so it lands in
-# syslog/journal AND on stderr (the latter reaches cron mail when an MTA
-# is configured). Without this, a misconfigured CH host or a stuck
-# .load file produces no visible signal on systems with no MTA — the
-# common "everything looks fine but no data is loading" failure mode.
+# logger -s: diagnostics reach syslog/journal AND stderr, so cron mail sees
+# failures on hosts with an MTA. Without it a stuck load is silent.
 log() {
     local level=$1; shift
     logger -s -t pping2-load -p "daemon.$level" -- "$*"
@@ -23,10 +18,8 @@ log() {
 
 [ -r /etc/default/pping2 ] && . /etc/default/pping2
 
-# tr ' ' '\t' below assumes pping2's space-separated output has no spaces
-# inside fields. True for the current `-a` / `-e` formats (numerics, IPs,
-# RFC-bound FQDNs, single-char tags). If pping2 ever gains a field that
-# can contain spaces, this loader needs an awk/perl reformatter.
+# tr ' ' '\t' below assumes no spaces inside fields. Holds for current
+# -a/-e formats; a space-bearing field would need an awk/perl reformatter.
 
 LOGFILE="${PPING_LOGFILE:-/var/log/pping2/pping2.log}"
 LOADFILE="${LOGFILE}.load"
@@ -58,18 +51,14 @@ case "$INGEST" in
         ;;
 esac
 
-# Route the ingest tool's stderr through logger so its diagnostic
-# (e.g. "Code: 209. DB::NetException: Connection refused" from
-# clickhouse-client, or curl's resolve/SSL errors) reaches syslog/journal.
-# Process substitution requires bash, which the shebang already mandates.
+# Route the ingest tool's stderr through logger so CH/curl errors reach
+# syslog/journal. Process substitution requires bash (shebang mandates it).
 ingest() {
     "$ingest_fn" 2> >(logger -s -t pping2-load -p daemon.err)
 }
 
-# Previous run's ingest failed and left $LOADFILE behind (e.g. CH was
-# unreachable). Retry it now instead of blocking forever until an operator
-# steps in — checked before LOGFILE so even a quiet pping2 (no new rows)
-# still retries the stuck file once a minute.
+# Retry a $LOADFILE left by a previous failed ingest (e.g. CH unreachable).
+# Checked before LOGFILE so a quiet pping2 still retries the stuck file.
 if [ -f "$LOADFILE" ]; then
     log warning "$LOADFILE present from previous run; retrying ingest"
     if ingest; then
@@ -88,18 +77,15 @@ if ! systemctl reload pping2.service; then
     exit 1
 fi
 
-# Fence the rotation against pping2's block-buffered stdout. `systemctl
-# reload` only sends SIGHUP and returns; pping2 reopens on its next
-# packet-loop iteration, and reopenLogfile() fflush()es the tail of its
-# buffer to $LOADFILE (the old inode) *before* open()ing the fresh
-# O_CREAT'd $LOGFILE. Since printf writes whole records, that fflush lands
-# on a record boundary. So $LOGFILE reappearing is the signal that
-# $LOADFILE is fully flushed and newline-terminated. Ingest before that and
-# the tail is a partial 4KB-buffer flush cut mid-record — ClickHouse then
-# rejects the whole batch with "Cannot parse input: expected '\t' at end of
-# stream". Wait up to ~3s: a busy node reopens in ms (the first check runs
-# before any sleep), and a truly idle node has no new data to tear anyway —
-# its $LOADFILE is just retried next run.
+# Fence against pping2's block-buffered stdout. `systemctl reload` only
+# sends SIGHUP; pping2 reopens on its next packet-loop iteration, fflush()ing
+# its buffer tail to $LOADFILE (old inode) *before* open()ing the fresh
+# $LOGFILE. printf writes whole records, so that flush lands on a record
+# boundary — $LOGFILE reappearing means $LOADFILE is fully flushed. Ingest
+# earlier and the tail is a partial buffer cut mid-record; ClickHouse rejects
+# the whole batch: "Cannot parse input: expected '\t' at end of stream".
+# Wait up to ~3s (first check before any sleep); an idle node has no torn
+# tail anyway and just retries next run.
 reopened=false
 for _ in $(seq 1 6); do
     [ -e "$LOGFILE" ] && { reopened=true; break; }

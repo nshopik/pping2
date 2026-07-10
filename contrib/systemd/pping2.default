@@ -1,46 +1,30 @@
-# /etc/default/pping2 — configuration for pping2.service and pping2-load.sh.
-# This file is sourced by pping2-load.sh and read by systemd's EnvironmentFile=.
-# Use simple KEY=value lines only — arbitrary shell here can break the loader
-# under `set -euo pipefail`.
-# Edit this file then run: sudo systemctl restart pping2
+# /etc/default/pping2 — config for pping2.service and pping2-load.sh.
+# Sourced by the loader and read via systemd EnvironmentFile=. KEY=value
+# lines only; arbitrary shell breaks the loader under `set -euo pipefail`.
+# Edit, then: sudo systemctl restart pping2
 #
-# Credentials warning: if you set CH_AUTH or put a password inside CH_ARGS,
-# this file must NOT be world-readable. The pping2 .deb installs it as
-# 0640 root:root and the postinst chmod o-rwx's it on upgrade. If you
-# copied it manually, run:
-#     sudo chmod 0640 /etc/default/pping2
+# Credentials: if CH_AUTH or a password in CH_ARGS is set, this file must
+# NOT be world-readable. The .deb installs it 0640 root:root; if copied
+# manually, run: sudo chmod 0640 /etc/default/pping2
 
-# Network interface to monitor (required). Single interface only — multi-
-# interface support will land alongside per-row interface attribution in a
-# future release.
+# Interface to monitor (required). Single interface only.
 PPING_IFACE=eth0
 
-# pping2 flags, space-separated. -a enables aggregate mode (one row per flow
-# window), recommended for ClickHouse ingest. Example with windowing:
+# pping2 flags, space-separated. -a = aggregate mode (one row per flow
+# window), recommended for ClickHouse ingest. Values must not contain
+# spaces (systemd word-splits this). See `pping2 --help`.
 #   PPING_FLAGS="-a --flowMaxAge=900"
-# Flag values must not contain internal spaces (systemd word-splits
-# ${PPING_FLAGS} when expanding the unit's ExecStart=). See `pping2 --help`
-# for the full flag list.
 PPING_FLAGS=-a
 
-# BPF capture filter (pcap syntax). Unlike PPING_FLAGS this MAY contain spaces
-# — the unit passes it through `sh -c` so quoting is preserved. pping2 ANDs it
-# onto its built-in `tcp` base filter, so `port 53` captures TCP/53 only.
-# pping measures RTT from TCP timestamps/SEQ, so only TCP is ever captured;
-# UDP DNS carries no RTT signal and is filtered out regardless.
-#   PPING_FILTER="port 53"          # DNS (TCP/53: DoT fallback, AXFR, large answers)
+# BPF capture filter (pcap syntax). May contain spaces. ANDed onto pping2's
+# built-in `tcp` filter. Empty = all TCP.
+#   PPING_FILTER="port 53"              # DoT fallback, AXFR, large answers
 #   PPING_FILTER="port 53 or port 853"  # DNS + DoT
-# Empty (default) captures all TCP.
 PPING_FILTER=
 
-# Path pping2 writes its output to (used by both the systemd unit and the
-# ClickHouse loader). pping2 opens this path with --logfile and reopens it
-# on SIGHUP, so external tools can rotate the file atomically.
-#
-# The directory must be writable by the `pping2` system user the unit runs
-# as; `make install-systemd` creates /var/log/pping2/ owned by `pping2` for
-# this reason. Putting the file directly under /var/log/ would prevent
-# pping2 from recreating it on SIGHUP after rotation.
+# Output path (--logfile). Directory must be writable by the `pping2` user;
+# `make install-systemd` creates /var/log/pping2/ for this. Do not put the
+# file directly under /var/log/ — breaks SIGHUP reopen after rotation.
 PPING_LOGFILE=/var/log/pping2/pping2.log
 
 # --- ClickHouse loader settings (used by /usr/local/bin/pping2-load.sh) ---
@@ -48,39 +32,30 @@ PPING_LOGFILE=/var/log/pping2/pping2.log
 # Destination table.
 PPING_TABLE=pping_flows
 
-# Ingest method. 'clickhouse-client' (default) requires that binary on PATH;
-# 'curl' uses ClickHouse's HTTP interface and works on hosts that don't have
-# the clickhouse-client package installed.
+# Ingest method: 'clickhouse-client' (default, needs that binary) or 'curl'
+# (HTTP interface, no client package required).
 PPING_INGEST=clickhouse-client
 
-# --- clickhouse-client mode (PPING_INGEST=clickhouse-client) ---
-#
-# clickhouse-client arguments, space-separated. Values must not contain
-# internal spaces (the loader word-splits this var). For passwords with
-# spaces, use a clickhouse-client config file:
-#   CH_ARGS="--config-file=/etc/clickhouse-client/pping.xml"
-# Example:
+# --- clickhouse-client mode ---
+# Args, space-separated, no internal spaces. For passwords with spaces use
+# a config file: CH_ARGS="--config-file=/etc/clickhouse-client/pping.xml"
 #   CH_ARGS="--host clickhouse.internal --database metrics --user pping --password=hunter2"
 CH_ARGS=
 
-# --- curl mode (PPING_INGEST=curl) ---
-#
-# Base URL of the ClickHouse HTTP interface (no trailing slash). Required
-# when PPING_INGEST=curl; ignored otherwise.
-# Examples:
-#   CH_URL=http://localhost:8123
+# --- curl mode ---
+# ClickHouse HTTP base URL, no trailing slash. Required when INGEST=curl.
 #   CH_URL=https://clickhouse.internal:8443
 CH_URL=
 
-# HTTP basic-auth credentials in user:password form. Leave empty for no auth.
+# HTTP basic-auth as user:password. Empty = no auth.
 #   CH_AUTH=pping:hunter2
 CH_AUTH=
 
-# Optional database name. If set, the loader inserts into ${CH_DATABASE}.${PPING_TABLE}.
-# Leave empty to use the server's default database (or specify it in CH_URL).
+# Optional database; loader inserts into ${CH_DATABASE}.${PPING_TABLE}.
+# Empty = server default (or set it in CH_URL).
 CH_DATABASE=
 
-# Extra curl flags, space-separated. Common uses:
-#   --cacert /etc/ssl/private/ca.crt   (custom CA bundle)
-#   --max-time 30                      (timeout override)
+# Extra curl flags, space-separated.
+#   --cacert /etc/ssl/private/ca.crt    (custom CA)
+#   --max-time 30                       (timeout)
 CH_CURL_OPTS=
