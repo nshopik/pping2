@@ -7,6 +7,8 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
+## v1.2.3 — 2026-07-10
+
 ### Fixed
 
 - **ClickHouse loader rotation race** — `pping2-load.sh` waits for pping2 to
