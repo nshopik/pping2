@@ -73,6 +73,7 @@
 #endif
 #include <pcap.h>
 #include <csignal>
+#include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <string>
@@ -946,8 +947,10 @@ static void help(const char* pname) {
 "  -r|--read pcap     process capture file <pcap>\n"
 "\n"
 "  -f|--filter expr   pcap filter applied to packets.\n"
-"                     Eg., \"-f 'net 74.125.0.0/16 or 45.57.0.0/17'\"\n" 
+"                     Eg., \"-f 'net 74.125.0.0/16 or 45.57.0.0/17'\"\n"
 "                     only shows traffic to/from youtube or netflix.\n"
+"                     Falls back to the PPING_FILTER env var when no\n"
+"                     -f is given (-f wins if both are set).\n"
 "\n"
 "  -m|--machine       'machine readable' output format suitable\n"
 "                     for graphing or post-processing. Timestamps\n"
@@ -1033,12 +1036,13 @@ int main(int argc, char* const* argv)
         exit(1);
     }
     int longindex = -1;
+    bool filterFromCli = false;
     for (int c; (c = getopt_long(argc, argv, "i:r:f:c:s:hlmqveaV",
                                  opts, &longindex)) != -1; ) {
         switch (c) {
         case 'i': liveInp = true; fname = optarg; break;
         case 'r': fname = optarg; break;
-        case 'f': filter += " and (" + std::string(optarg) + ")"; break;
+        case 'f': filter += " and (" + std::string(optarg) + ")"; filterFromCli = true; break;
         case 'c': maxPackets = atof(optarg); break;
         case 's': time_to_run = atof(optarg); break;
         case 'q': sumInt = 0.; sumExplicit = true; break;
@@ -1085,6 +1089,15 @@ int main(int argc, char* const* argv)
         std::cerr << "fatal: -a/--aggregate is mutually exclusive with "
                      "-e/--extended and -m/--machine\n";
         exit(EXIT_FAILURE);
+    }
+    // PPING_FILTER env fallback: apply only when no -f was given on the
+    // cmdline. Lets pping2.service pass a space-bearing BPF filter without an
+    // sh -c wrapper; a manual -f stays authoritative.
+    if (!filterFromCli) {
+        if (const char* envFilter = std::getenv("PPING_FILTER");
+            envFilter && *envFilter) {
+            filter += " and (" + std::string(envFilter) + ")";
+        }
     }
     if (optind < argc || fname.empty()) {
         usage(argv[0]);

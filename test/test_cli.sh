@@ -116,6 +116,25 @@ else
     pass "no_capture_line_in_file_mode"
 fi
 
+# 13. PPING_FILTER env var is read by the binary itself (systemd no longer
+# wraps it through sh -c). A filter matching no packets zeroes the output.
+DNSPCAP="$SCRIPT_DIR/pcaps/dns-tcp-linux.pcap"
+BASE=$(PPING_FILTER= "$PPING" -a -c 20 -r "$DNSPCAP" 2>/dev/null | wc -l | tr -d ' ')
+DROP=$(PPING_FILTER="port 9999" "$PPING" -a -c 20 -r "$DNSPCAP" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$BASE" -gt 0 ] && [ "$DROP" -eq 0 ]; then
+    pass "env_filter_applied"
+else
+    fail "env_filter_applied" "base=$BASE drop=$DROP (expected base>0, drop=0)"
+fi
+
+# 14. CLI -f wins over PPING_FILTER env (env ignored when -f present)
+OVER=$(PPING_FILTER="port 9999" "$PPING" -a -c 20 -f "port 53" -r "$DNSPCAP" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$OVER" -gt 0 ]; then
+    pass "cli_f_overrides_env"
+else
+    fail "cli_f_overrides_env" "rows=$OVER (expected >0; -f must win over env)"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo ""
 echo "test_cli: $PASS/$TOTAL checks passed"

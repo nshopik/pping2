@@ -7,6 +7,13 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
+### Added
+
+- **`PPING_FILTER` environment variable** — pping2 reads a BPF capture
+  filter from the environment when no `-f` is given (`-f` overrides it).
+  `pping2.service` now invokes the binary directly, dropping its shell
+  wrapper.
+
 ## v1.2.3 — 2026-07-10
 
 ### Fixed
