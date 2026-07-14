@@ -14,6 +14,14 @@ This is the first versioned release of the fork.
   `pping2.service` now invokes the binary directly, dropping its shell
   wrapper.
 
+### Fixed
+
+- **Loader no longer stacks or hangs forever** — `pping2-load.sh` takes a
+  `flock` so overlapping cron ticks skip instead of piling up, and the curl
+  ingest path aborts a transfer stalled below 1 B/s for
+  `PPING_CURL_STALL_TIME` seconds (default 60) instead of hanging with no
+  timeout.
+
 ## v1.2.3 — 2026-07-10
 
 ### Fixed

@@ -26,6 +26,16 @@ LOADFILE="${LOGFILE}.load"
 TABLE="${PPING_TABLE:-pping_flows}"
 INGEST="${PPING_INGEST:-clickhouse-client}"
 
+# Single-instance guard. Cron fires this every minute; without the lock a slow
+# or stuck ingest (CH briefly unreachable, a stalled upload) lets each tick
+# stack another loader, and they pile up until the sensors and the CH server
+# mutually starve — none finishes, the .load never drains, and the live log
+# grows unbounded. flock -n: if a prior run still holds the lock, skip this
+# tick rather than queue behind it (a blocking wait would just re-stack).
+LOCKFILE="${PPING_LOCKFILE:-/run/pping2-load.lock}"
+exec 9>"$LOCKFILE"
+flock -n 9 || { log info "another pping2-load holds $LOCKFILE; skipping this run"; exit 0; }
+
 ingest_via_clickhouse_client() {
     tr ' ' '\t' < "$LOADFILE" \
       | clickhouse-client $CH_ARGS --query="INSERT INTO ${TABLE} FORMAT TSV"
@@ -36,10 +46,16 @@ ingest_via_curl() {
     local full_table="${CH_DATABASE:+${CH_DATABASE}.}${TABLE}"
     local auth_arg=()
     [ -n "${CH_AUTH:-}" ] && auth_arg=(-u "$CH_AUTH")
+    # --speed-limit/--speed-time abort a transfer stalled below 1 B/s for
+    # PPING_CURL_STALL_TIME seconds. curl otherwise has no transfer timeout, so
+    # a stalled upload (server wedged mid-body) hangs forever — the failure that
+    # stacked 66 half-sent inserts after a CH outage. The clickhouse-client path
+    # needs no equivalent: its send/receive_timeout already defaults to 300s.
     {
         echo "INSERT INTO ${full_table} FORMAT TabSeparated"
         tr ' ' '\t' < "$LOADFILE"
-    } | curl -sS -f "${auth_arg[@]}" ${CH_CURL_OPTS:-} "$CH_URL/" --data-binary @-
+    } | curl -sS -f --speed-limit 1 --speed-time "${PPING_CURL_STALL_TIME:-60}" \
+        "${auth_arg[@]}" ${CH_CURL_OPTS:-} "$CH_URL/" --data-binary @-
 }
 
 case "$INGEST" in
