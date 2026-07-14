@@ -13,6 +13,9 @@ This is the first versioned release of the fork.
   filter from the environment when no `-f` is given (`-f` overrides it).
   `pping2.service` now invokes the binary directly, dropping its shell
   wrapper.
+- **`PPING_CURL_ZSTD` loader knob** — optionally zstd-compresses the curl
+  ingest upload (`Content-Encoding: zstd`), ~5-7x smaller, for draining a
+  large backlog over a slow uplink after an outage. Off by default.
 
 ### Fixed
 

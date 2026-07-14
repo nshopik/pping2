@@ -64,3 +64,7 @@ CH_CURL_OPTS=
 # below 1 B/s for this long, so a wedged server can't hang the loader
 # forever. Default 60; raise for very slow links.
 #   PPING_CURL_STALL_TIME=60
+
+# zstd-compress the upload (needs the `zstd` binary). Set to a zstd level;
+# empty = uncompressed.
+#   PPING_CURL_ZSTD=3

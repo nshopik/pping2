@@ -46,6 +46,13 @@ ingest_via_curl() {
     local full_table="${CH_DATABASE:+${CH_DATABASE}.}${TABLE}"
     local auth_arg=()
     [ -n "${CH_AUTH:-}" ] && auth_arg=(-u "$CH_AUTH")
+    # PPING_CURL_ZSTD=<level>: zstd the body; CH decompresses via Content-Encoding.
+    local compress=(cat) enc_header=()
+    if [ -n "${PPING_CURL_ZSTD:-}" ]; then
+        compress=(zstd -c "-${PPING_CURL_ZSTD}")
+        enc_header=(-H 'Content-Encoding: zstd')
+    fi
+
     # --speed-limit/--speed-time abort a transfer stalled below 1 B/s for
     # PPING_CURL_STALL_TIME seconds. curl otherwise has no transfer timeout, so
     # a stalled upload (server wedged mid-body) hangs forever — the failure that
@@ -54,8 +61,8 @@ ingest_via_curl() {
     {
         echo "INSERT INTO ${full_table} FORMAT TabSeparated"
         tr ' ' '\t' < "$LOADFILE"
-    } | curl -sS -f --speed-limit 1 --speed-time "${PPING_CURL_STALL_TIME:-60}" \
-        "${auth_arg[@]}" ${CH_CURL_OPTS:-} "$CH_URL/" --data-binary @-
+    } | "${compress[@]}" | curl -sS -f --speed-limit 1 --speed-time "${PPING_CURL_STALL_TIME:-60}" \
+        "${enc_header[@]}" "${auth_arg[@]}" ${CH_CURL_OPTS:-} "$CH_URL/" --data-binary @-
 }
 
 case "$INGEST" in
