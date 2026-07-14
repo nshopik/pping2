@@ -60,11 +60,6 @@ CH_DATABASE=
 #   --max-time 30                       (hard total-time cap)
 CH_CURL_OPTS=
 
-# Stalled-upload guard (seconds). The loader aborts a curl transfer stuck
-# below 1 B/s for this long, so a wedged server can't hang the loader
-# forever. Default 60; raise for very slow links.
-#   PPING_CURL_STALL_TIME=60
-
-# zstd-compress the upload (needs the `zstd` binary). Set to a zstd level;
-# empty = uncompressed.
-#   PPING_CURL_ZSTD=3
+# zstd-compress the upload (needs the `zstd` binary). true = compress,
+# false/empty = uncompressed. Helps drain a large backlog over a slow uplink.
+#   PPING_CURL_ZSTD=true

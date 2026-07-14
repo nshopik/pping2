@@ -46,22 +46,18 @@ ingest_via_curl() {
     local full_table="${CH_DATABASE:+${CH_DATABASE}.}${TABLE}"
     local auth_arg=()
     [ -n "${CH_AUTH:-}" ] && auth_arg=(-u "$CH_AUTH")
-    # PPING_CURL_ZSTD=<level>: zstd the body; CH decompresses via Content-Encoding.
+    # PPING_CURL_ZSTD=true: zstd the body at a fixed level; CH decompresses via
+    # the Content-Encoding header alone (no server-side setting needed).
     local compress=(cat) enc_header=()
-    if [ -n "${PPING_CURL_ZSTD:-}" ]; then
-        compress=(zstd -c "-${PPING_CURL_ZSTD}")
+    if [ "${PPING_CURL_ZSTD:-false}" = true ]; then
+        compress=(zstd -c -3)
         enc_header=(-H 'Content-Encoding: zstd')
     fi
 
-    # --speed-limit/--speed-time abort a transfer stalled below 1 B/s for
-    # PPING_CURL_STALL_TIME seconds. curl otherwise has no transfer timeout, so
-    # a stalled upload (server wedged mid-body) hangs forever — the failure that
-    # stacked 66 half-sent inserts after a CH outage. The clickhouse-client path
-    # needs no equivalent: its send/receive_timeout already defaults to 300s.
     {
         echo "INSERT INTO ${full_table} FORMAT TabSeparated"
         tr ' ' '\t' < "$LOADFILE"
-    } | "${compress[@]}" | curl -sS -f --speed-limit 1 --speed-time "${PPING_CURL_STALL_TIME:-60}" \
+    } | "${compress[@]}" | curl -sS -f \
         "${enc_header[@]}" "${auth_arg[@]}" ${CH_CURL_OPTS:-} "$CH_URL/" --data-binary @-
 }
 
