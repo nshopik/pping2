@@ -57,5 +57,10 @@ CH_DATABASE=
 
 # Extra curl flags, space-separated.
 #   --cacert /etc/ssl/private/ca.crt    (custom CA)
-#   --max-time 30                       (timeout)
+#   --max-time 30                       (hard total-time cap)
 CH_CURL_OPTS=
+
+# Stalled-upload guard (seconds). The loader aborts a curl transfer stuck
+# below 1 B/s for this long, so a wedged server can't hang the loader
+# forever. Default 60; raise for very slow links.
+#   PPING_CURL_STALL_TIME=60
