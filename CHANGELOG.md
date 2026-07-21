@@ -7,6 +7,8 @@ This is the first versioned release of the fork.
 
 ## Unreleased
 
+## v1.2.4 — 2026-07-21
+
 ### Added
 
 - **`PPING_FILTER` environment variable** — pping2 reads a BPF capture
