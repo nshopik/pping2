@@ -119,7 +119,7 @@ The Makefile ships three install targets and an umbrella:
 ```Shell
 sudo make install              # binary + setcap cap_net_raw+ep on Linux
 sudo make install-systemd      # +pping2.service, /etc/default/pping2
-sudo make install-clickhouse   # +cron loader, +schema.sql for the pping_flows table
+sudo make install-clickhouse   # +timer-driven loader, +schema.sql for the pping_flows table
 sudo make install-all          # all three (Linux only)
 ```
 
@@ -127,9 +127,9 @@ Each has a matching `uninstall*` target. `DESTDIR` and `PREFIX` are honored
 for distro packagers; `setcap` is skipped (with a warning) when `DESTDIR` is
 set so packaging postinst scripts can apply it. Installed scripts have their
 paths rewritten at install time, so `make install-all PREFIX=/usr` produces
-correct paths (no hardcoded `/usr/local` in the cron, unit, loader).
+correct paths (no hardcoded `/usr/local` in the units, loader).
 
-For the worked end-to-end example (pping2 → cron loader → ClickHouse), see
+For the worked end-to-end example (pping2 → timer loader → ClickHouse), see
 [`clickhouse.md`](clickhouse.md).
 
 ### Running without installing

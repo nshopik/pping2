@@ -213,10 +213,16 @@ install-clickhouse: check-install-vars
 	$(SUBST) contrib/clickhouse/pping2-load.sh \
 	    > $(DESTDIR)$(PREFIX)/bin/pping2-load.sh
 	chmod 0755 $(DESTDIR)$(PREFIX)/bin/pping2-load.sh
-	install -d $(DESTDIR)$(SYSCONFDIR)/cron.d
-	$(SUBST) contrib/clickhouse/pping2-load.cron \
-	    > $(DESTDIR)$(SYSCONFDIR)/cron.d/pping2-load
-	chmod 0644 $(DESTDIR)$(SYSCONFDIR)/cron.d/pping2-load
+	install -d $(DESTDIR)$(SYSCONFDIR)/systemd/system
+	$(SUBST) contrib/clickhouse/pping2-load.service \
+	    > $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2-load.service
+	chmod 0644 $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2-load.service
+	install -m 0644 contrib/clickhouse/pping2-load.timer \
+	    $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2-load.timer
+	# Earlier installs scheduled the loader from cron; drop the stale entry
+	# so both schedulers don't fire.
+	rm -f $(DESTDIR)$(SYSCONFDIR)/cron.d/pping2-load
+	if [ -z "$(DESTDIR)" ]; then systemctl daemon-reload; fi
 	install -d $(DESTDIR)$(SHAREDIR)
 	install -m 0644 contrib/clickhouse/schema.sql \
 	    $(DESTDIR)$(SHAREDIR)/schema.sql
@@ -227,11 +233,12 @@ install-clickhouse: check-install-vars
 	@echo "  clickhouse-client < $(SHAREDIR)/schema.sql"
 	@echo "Write-only loader user is at $(SHAREDIR)/ingest-user.sql."
 	@echo "Edit the password, then apply it the same way."
-	@echo "Then set CH_ARGS in $(SYSCONFDIR)/default/pping2."
+	@echo "Then set CH_ARGS in $(SYSCONFDIR)/default/pping2 and start the loader:"
+	@echo "  sudo systemctl enable --now pping2-load.timer"
 
 install-all: check-install-vars
 ifneq ($(shell uname -s),Linux)
-	@echo "install-all is Linux-only (needs systemd + setcap + /etc/cron.d)."
+	@echo "install-all is Linux-only (needs systemd + setcap)."
 	@echo "On macOS/BSD use 'make install' for a binary-only install."
 	@exit 1
 endif
@@ -248,11 +255,18 @@ uninstall-systemd:
 	# /etc/default/pping2 and /var/log/pping2/ are intentionally left in place
 
 uninstall-clickhouse:
+	if [ -z "$(DESTDIR)" ]; then \
+	    systemctl disable --now pping2-load.timer 2>/dev/null || true; \
+	fi
 	rm -f $(DESTDIR)$(PREFIX)/bin/pping2-load.sh
+	rm -f $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2-load.service
+	rm -f $(DESTDIR)$(SYSCONFDIR)/systemd/system/pping2-load.timer
+	# stale cron entry from pre-timer installs
 	rm -f $(DESTDIR)$(SYSCONFDIR)/cron.d/pping2-load
 	rm -f $(DESTDIR)$(SHAREDIR)/schema.sql
 	rm -f $(DESTDIR)$(SHAREDIR)/ingest-user.sql
 	rmdir --ignore-fail-on-non-empty $(DESTDIR)$(SHAREDIR) 2>/dev/null || true
+	if [ -z "$(DESTDIR)" ]; then systemctl daemon-reload; fi
 	# /etc/default/pping2 and any *.load files are intentionally left in place
 
 uninstall-all: uninstall-clickhouse uninstall-systemd uninstall

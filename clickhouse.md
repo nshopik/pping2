@@ -14,10 +14,10 @@ sudo make install-all
 sudo $EDITOR /etc/default/pping2        # set PPING_IFACE and CH_ARGS
 clickhouse-client < /usr/local/share/pping2/schema.sql
 clickhouse-client < /usr/local/share/pping2/ingest-user.sql   # edit password first
-sudo systemctl enable --now pping2
+sudo systemctl enable --now pping2 pping2-load.timer
 ```
 
-That's the entire setup. Within a minute the cron loader picks up
+That's the entire setup. Within a minute the timer-driven loader picks up
 `/var/log/pping2/pping2.log` and inserts into the `pping_flows` table.
 
 ## What got installed
@@ -27,8 +27,9 @@ That's the entire setup. Within a minute the cron loader picks up
 | `/usr/local/bin/pping2` | binary | the daemon |
 | `/etc/systemd/system/pping2.service` | `contrib/systemd/` | systemd unit; `ExecReload` sends SIGHUP for log rotation |
 | `/etc/default/pping2` | `contrib/systemd/pping2.default` | the **only** file you edit; sourced by both daemon and loader |
-| `/usr/local/bin/pping2-load.sh` | `contrib/clickhouse/` | cron-driven batch loader |
-| `/etc/cron.d/pping2-load` | `contrib/clickhouse/` | runs the loader every minute |
+| `/usr/local/bin/pping2-load.sh` | `contrib/clickhouse/` | batch loader |
+| `/etc/systemd/system/pping2-load.service` | `contrib/clickhouse/` | oneshot unit wrapping the loader |
+| `/etc/systemd/system/pping2-load.timer` | `contrib/clickhouse/` | fires the loader every minute |
 | `/usr/local/share/pping2/schema.sql` | `contrib/clickhouse/` | reference schema (apply manually) |
 | `/usr/local/share/pping2/ingest-user.sql` | `contrib/clickhouse/` | write-only loader user (apply manually) |
 | `/var/log/pping2/` | `make install-systemd` | log dir, owned by the `pping2` system user so the daemon can recreate the file on SIGHUP |
@@ -77,7 +78,7 @@ container that doesn't otherwise touch ClickHouse tooling. Configure with
 `CH_URL`, `CH_AUTH`, optional `CH_DATABASE`, and `CH_CURL_OPTS` for things
 like `--cacert` or `--max-time`.
 
-Both modes use the same loader cron entry, the same `mv` + `systemctl reload`
+Both modes use the same loader timer, the same `mv` + `systemctl reload`
 rotation, and the same `.load` file retry semantics on failure. Switch by
 editing `/etc/default/pping2`; no service restart required (the loader
 re-reads the env file every minute).
@@ -97,7 +98,7 @@ self-heals without an operator clearing the file by hand.
 - `PPING_FLAGS=-a --flowMaxAge=900` halves the per-flow window from the 1800s
   default — emit closed flows + 15-minute snapshots for long-lived flows.
   See README's "Output formats" for the full `-a` semantics.
-- The cron loader runs every minute. If ClickHouse is unreachable, the
+- The loader timer fires every minute. If ClickHouse is unreachable, the
   `.load` stays on disk and the next minute's run keeps appending to a fresh
   `pping2.log` — no data loss, just a bigger batch on the next success.
 - The shipped table TTL is 30 days
@@ -148,7 +149,7 @@ GRANT INSERT ON pping_flows TO pping2;
 
 ## Alternative: Vector
 
-If you already operate [Vector](https://vector.dev/), you can drop the cron
+If you already operate [Vector](https://vector.dev/), you can drop the batch
 loader entirely:
 
 ```sh
@@ -157,5 +158,5 @@ sudo /usr/local/bin/pping2 $PPING_FLAGS -i $PPING_IFACE | vector --config vector
 
 Configure a `stdin` source → `regex_parser` transform (one regex per pping2
 output field) → `clickhouse` sink. Vector handles buffering, retries, and
-backpressure on its own. Not recommended over the cron path for a fresh
+backpressure on its own. Not recommended over the timer path for a fresh
 deployment — it's only worth it if Vector is already part of your stack.

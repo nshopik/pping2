@@ -7,4 +7,4 @@ Description: Passive TCP RTT measurement tool
  pping2 measures TCP round-trip time by passively monitoring active
  connections without injecting traffic. Includes SEQ/ACK measurement
  for flows without TCP timestamp option, aggregated output for
- ClickHouse ingest, and a systemd+cron operational stack.
+ ClickHouse ingest, and a systemd operational stack (service + timer).

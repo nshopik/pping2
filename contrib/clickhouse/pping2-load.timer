@@ -1,0 +1,11 @@
+[Unit]
+Description=Run pping2 ClickHouse loader every minute
+
+[Timer]
+OnCalendar=minutely
+# Default AccuracySec (1min) lets ticks drift/coalesce within the minute;
+# keep the cron-like cadence the docs promise ("within a minute").
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

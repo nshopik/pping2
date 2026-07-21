@@ -1,0 +1,7 @@
+[Unit]
+Description=Batch-load pping2 output into ClickHouse
+After=pping2.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pping2-load.sh
