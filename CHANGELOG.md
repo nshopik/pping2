@@ -20,9 +20,8 @@ This is the first versioned release of the fork.
 ### Changed
 
 - **Breaking:** ClickHouse loader is scheduled by a systemd timer
-  (`pping2-load.timer`) instead of cron — Debian ships without cron by
-  default. `make install-clickhouse` removes the old
-  `/etc/cron.d/pping2-load`; start the loader with
+  (`pping2-load.timer`) instead of cron. `make install-clickhouse`
+  removes the old `/etc/cron.d/pping2-load`; start the loader with
   `systemctl enable --now pping2-load.timer`.
 
 ### Fixed
