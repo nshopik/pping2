@@ -242,7 +242,8 @@ jobs:
           chk 755 /usr/bin/pping2-load.sh
           chk 644 /etc/systemd/system/pping2.service
           chk 640 /etc/default/pping2
-          chk 644 /etc/cron.d/pping2-load
+          chk 644 /etc/systemd/system/pping2-load.service
+          chk 644 /etc/systemd/system/pping2-load.timer
           chk 644 /usr/share/pping2/schema.sql
           if [ -d "$STAGE/var/log/pping2" ]; then
             echo "OK dir /var/log/pping2"

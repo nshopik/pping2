@@ -17,10 +17,18 @@ This is the first versioned release of the fork.
   ingest upload (`Content-Encoding: zstd`), ~5-7x smaller, for draining a
   large backlog over a slow uplink after an outage. Off by default.
 
+### Changed
+
+- **Breaking:** ClickHouse loader is scheduled by a systemd timer
+  (`pping2-load.timer`) instead of cron — Debian ships without cron by
+  default. `make install-clickhouse` removes the old
+  `/etc/cron.d/pping2-load`; start the loader with
+  `systemctl enable --now pping2-load.timer`.
+
 ### Fixed
 
 - **Loader no longer stacks** — `pping2-load.sh` takes a `flock` so
-  overlapping cron ticks skip instead of piling up.
+  overlapping runs skip instead of piling up.
 
 ## v1.2.3 — 2026-07-10
 

@@ -4,6 +4,8 @@ set -e
 case "$1" in
     remove|purge)
         if [ -d /run/systemd/system ]; then
+            systemctl stop pping2-load.timer 2>/dev/null || true
+            systemctl disable pping2-load.timer 2>/dev/null || true
             systemctl stop pping2 2>/dev/null || true
             systemctl disable pping2 2>/dev/null || true
         fi

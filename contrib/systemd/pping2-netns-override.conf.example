@@ -13,3 +13,7 @@
 
 [Service]
 NetworkNamespacePath=/run/netns/service
+
+# If ClickHouse is only reachable from inside the namespace, give the
+# loader the same drop-in: sudo systemctl edit pping2-load.service and
+# paste the same [Service] block.

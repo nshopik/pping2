@@ -1,5 +1,5 @@
 #!/bin/bash
-# Batch-load pping2's log file into ClickHouse. Driven by /etc/cron.d/pping2-load.
+# Batch-load pping2's log file into ClickHouse. Driven by pping2-load.timer.
 #
 # Rotation: mv $LOGFILE → $LOADFILE (atomic, same fs), then SIGHUP pping2 via
 # `systemctl reload` so it reopens --logfile at a fresh empty $LOGFILE. Old
@@ -9,8 +9,8 @@
 # /etc/default/pping2.
 set -euo pipefail
 
-# logger -s: diagnostics reach syslog/journal AND stderr, so cron mail sees
-# failures on hosts with an MTA. Without it a stuck load is silent.
+# logger -s: diagnostics reach syslog/journal tagged pping2-load AND stderr,
+# so failures are greppable by tag and visible in manual runs.
 log() {
     local level=$1; shift
     logger -s -t pping2-load -p "daemon.$level" -- "$*"
@@ -26,12 +26,14 @@ LOADFILE="${LOGFILE}.load"
 TABLE="${PPING_TABLE:-pping_flows}"
 INGEST="${PPING_INGEST:-clickhouse-client}"
 
-# Single-instance guard. Cron fires this every minute; without the lock a slow
-# or stuck ingest (CH briefly unreachable, a stalled upload) lets each tick
-# stack another loader, and they pile up until the sensors and the CH server
-# mutually starve — none finishes, the .load never drains, and the live log
-# grows unbounded. flock -n: if a prior run still holds the lock, skip this
-# tick rather than queue behind it (a blocking wait would just re-stack).
+# Single-instance guard. The timer fires this every minute; systemd won't
+# overlap the oneshot unit itself, but manual runs or a stray cron entry can.
+# Without the lock a slow or stuck ingest (CH briefly unreachable, a stalled
+# upload) lets each tick stack another loader, and they pile up until the
+# sensors and the CH server mutually starve — none finishes, the .load never
+# drains, and the live log grows unbounded. flock -n: if a prior run still
+# holds the lock, skip this tick rather than queue behind it (a blocking wait
+# would just re-stack).
 LOCKFILE="${PPING_LOCKFILE:-/run/pping2-load.lock}"
 exec 9>"$LOCKFILE"
 flock -n 9 || { log info "another pping2-load holds $LOCKFILE; skipping this run"; exit 0; }
