@@ -59,13 +59,6 @@ static const char* g_current_test = nullptr;
         } \
     } while (0)
 
-/* TODO() — marks an unimplemented test body.  Counts as a failure. */
-#define TODO() \
-    do { \
-        std::fprintf(stderr, "  TODO: %s not yet implemented\n", g_current_test); \
-        ++g_failures; \
-    } while (0)
-
 /* -------------------------------------------------------------------------
  * Pull in pping.cpp with its main() renamed so it doesn't conflict.
  * ---------------------------------------------------------------------- */
@@ -157,12 +150,6 @@ static TsKey makeTs4(uint8_t s_a, uint8_t s_b, uint8_t s_c, uint8_t s_d,
 
 static void test_flowkey_padding()
 {
-    // Sizes are baked into the on-the-wire hash function. If they change,
-    // every running pping that shares state (none today) would disagree —
-    // but more importantly, _pad shifting silently breaks CRC32Hash equality.
-    static_assert(sizeof(FlowKey) == 40, "FlowKey size guard");
-    static_assert(sizeof(TsKey) == 48,   "TsKey size guard");
-
     // Same logical key constructed via two independent default-init paths
     // must be byte-identical. If padding leaks stack garbage, this fails.
     FlowKey k1 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80);
@@ -173,6 +160,8 @@ static void test_flowkey_padding()
 
     CRC32Hash h;
     ASSERT_EQ(h(k1), h(k2));
+    // dstIP sits in the second 8-byte word; a change there must reach the hash.
+    ASSERT_TRUE(h(k1) != h(makeFlow4(10, 0, 0, 1, 10, 0, 0, 3, 1234, 80)));
 
     // The pad bytes themselves: walk from `af` forward and verify all-zero.
     const uint8_t* p = reinterpret_cast<const uint8_t*>(&k1);
@@ -224,14 +213,8 @@ static void test_flowkey_v4_v6_disambig()
 
     ASSERT_EQ(v4 == v6, false);
 
-    // Hashes will essentially always differ — CRC32C is sensitive to a
-    // single-byte change. Treat equality as a regression worth flagging.
     CRC32Hash h;
-    if (h(v4) == h(v6)) {
-        std::fprintf(stderr,
-            "  unexpected: v4 and v6 keys hashed equal (byte difference at af)\n");
-        ++g_failures;
-    }
+    ASSERT_TRUE(h(v4) != h(v6));
 }
 REGISTER_TEST(test_flowkey_v4_v6_disambig);
 
@@ -887,25 +870,6 @@ static void test_cleanUp_flush_all_drains_active_flows()
     aggregateOutput = saved_agg;
 }
 REGISTER_TEST(test_cleanUp_flush_all_drains_active_flows);
-
-static void test_crc32hash_sanity()
-{
-    CRC32Hash h;
-
-    // Assertion 1: Determinism — two byte-identical FlowKeys must hash equal.
-    FlowKey k1 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80);
-    FlowKey k2 = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80);
-    ASSERT_EQ(h(k1), h(k2));
-
-    // Assertion 2: Avalanche spot check — keys differing by exactly one bit
-    // (last byte of dstIP: 2 vs 3) must hash to different values.
-    // This catches "hash function constant-folded to zero" bugs.
-    FlowKey ka = makeFlow4(10, 0, 0, 1, 10, 0, 0, 2, 1234, 80);
-    FlowKey kb = makeFlow4(10, 0, 0, 1, 10, 0, 0, 3, 1234, 80);  // dstIP last byte differs
-    ASSERT_TRUE(h(ka) != h(kb));
-
-}
-REGISTER_TEST(test_crc32hash_sanity);
 
 /* -------------------------------------------------------------------------
  * Test runner

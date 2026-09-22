@@ -3,15 +3,12 @@ Shared helpers for synthesized RTT-test pcaps.
 
 All synth modules use a fixed RNG seed so ISNs are deterministic and golden
 output is reproducible. Each module defines `build()` that returns a list of
-scapy packets and writes the pcap via `write(name, pkts)` below.
+scapy packets; build.py writes them via `write(name, pkts)` below.
 """
-import os
 import random
 from pathlib import Path
 
-from scapy.all import (
-    Ether, IP, TCP, Raw, wrpcap,
-)
+from scapy.all import Ether, IP, TCP, Raw, wrpcap
 
 PCAPS_DIR = Path(__file__).resolve().parent.parent / "pcaps"
 
@@ -27,16 +24,27 @@ RTT_SEC = 0.050
 # Order chosen to match what Windows 10 actually emits on TCP SYN.
 WIN_OPTS_SYN = [("MSS", 1460), ("NOP", None), ("WScale", 8),
                 ("NOP", None), ("NOP", None), ("SAckOK", b"")]
-WIN_OPTS_ACK = []  # post-handshake: no options on data packets
 
-# Linux-style TCP options on the SYN: MSS, SACK-Permitted, Timestamp, NOP, WScale.
-LIN_OPTS_SYN = lambda tsval: [
+# Linux-style TCP options on the SYN/SYN-ACK: MSS, SACK-Permitted, Timestamp, NOP, WScale.
+LIN_OPTS_SYN = lambda tsval, tsecr=0: [
     ("MSS", 1460), ("SAckOK", b""),
-    ("Timestamp", (tsval, 0)), ("NOP", None), ("WScale", 7),
+    ("Timestamp", (tsval, tsecr)), ("NOP", None), ("WScale", 7),
 ]
 LIN_OPTS_DATA = lambda tsval, tsecr: [
     ("NOP", None), ("NOP", None), ("Timestamp", (tsval, tsecr)),
 ]
+
+
+def flow(cip, sip, cport, sport):
+    """Return (c2s, s2c) segment builders for one client/server pair."""
+    def seg(src_mac, dst_mac, src, dst, sp, dp):
+        def build(seq, ack, flags, payload=b"", opts=None):
+            return Ether(src=src_mac, dst=dst_mac) / IP(src=src, dst=dst) / \
+                   TCP(sport=sp, dport=dp, seq=seq, ack=ack, flags=flags,
+                       options=opts or []) / Raw(load=payload)
+        return build
+    return (seg(CLIENT_MAC, SERVER_MAC, cip, sip, cport, sport),
+            seg(SERVER_MAC, CLIENT_MAC, sip, cip, sport, cport))
 
 
 def seed(value: int) -> None:

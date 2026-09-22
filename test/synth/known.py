@@ -9,17 +9,11 @@ Consumed by test_integration.sh (golden diff) and test_cli.sh.
 """
 from decimal import Decimal
 
-from scapy.all import Ether, IP, TCP, Raw
-
 from . import common
 
 BASE_TIME = Decimal("1000000000")   # 2001-09-08 21:46:40 UTC
 STEP = Decimal("0.05")
 
-CLIENT_IP = "10.0.0.1"
-SERVER_IP = "10.0.0.2"
-C_PORT = 1234
-S_PORT = 80
 PAYLOAD = b"hello world!\n"
 
 # (src_is_client, seq, ack, flags, tsval, tsecr, payload)
@@ -34,18 +28,11 @@ PACKETS = [
 
 
 def build():
+    C2S, S2C = common.flow("10.0.0.1", "10.0.0.2", 1234, 80)
     pkts = []
     for i, (from_client, seq, ack, flags, tsval, tsecr, payload) in enumerate(PACKETS):
-        src_mac, dst_mac = (common.CLIENT_MAC, common.SERVER_MAC) if from_client \
-            else (common.SERVER_MAC, common.CLIENT_MAC)
-        src_ip, dst_ip = (CLIENT_IP, SERVER_IP) if from_client else (SERVER_IP, CLIENT_IP)
-        sport, dport = (C_PORT, S_PORT) if from_client else (S_PORT, C_PORT)
-        pkt = (Ether(src=src_mac, dst=dst_mac)
-               / IP(src=src_ip, dst=dst_ip)
-               / TCP(sport=sport, dport=dport, seq=seq, ack=ack, flags=flags,
-                     options=common.LIN_OPTS_DATA(tsval, tsecr)))
-        if payload:
-            pkt = pkt / Raw(load=payload)
+        pkt = (C2S if from_client else S2C)(seq, ack, flags, payload,
+                                           common.LIN_OPTS_DATA(tsval, tsecr))
         pkt.time = BASE_TIME + i * STEP
         pkts.append(pkt)
     return pkts

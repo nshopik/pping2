@@ -3,8 +3,7 @@
 # pcap fixtures, plus invariants and synth-fixture checks.
 # POSIX sh.
 #
-# Regenerating goldens: see test_seq.sh header for the full procedure;
-# the aggregate recipe uses '-a', strips col 8 (node), and pipes through sort.
+# Regenerate goldens with `make goldens`.
 . "$(dirname "$0")/lib.sh"
 
 # 1-3. Per-fixture golden diff. Strip col 8 (node/hostname) for portability.

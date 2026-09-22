@@ -134,13 +134,9 @@ jobs:
   # macOS builds produce tar.gz only (no systemd/cron on macOS).
   # Intel (amd64) dropped — macos-13 runners are unreliable and Intel Macs are 6+ years old.
   build-macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
+    env:
+      ARCH: arm64
     steps:
       - uses: actions/checkout@v6
 
@@ -157,7 +153,6 @@ jobs:
       - name: Build tarball
         env:
           VERSION: ${{ steps.ver.outputs.VERSION }}
-          ARCH: ${{ matrix.arch }}
         run: |
           STAGING="pping2-${VERSION}-macos-${ARCH}"
           mkdir "$STAGING"
@@ -168,7 +163,7 @@ jobs:
       - name: Upload tarball
         uses: actions/upload-artifact@v7
         with:
-          name: tarball-macos-${{ matrix.arch }}
+          name: tarball-macos-arm64
           path: pping2-*-macos-*.tar.gz
 
   # Static musl build — drop-in binary for OpenWrt and other musl systems.
@@ -176,13 +171,9 @@ jobs:
   # deps and no PT_INTERP. Built inside an Alpine container via docker so
   # the host (checkout/cache/upload) stays on the standard glibc runner.
   build-musl-static:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04-arm
-            arch: aarch64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04-arm
+    env:
+      ARCH: aarch64
     steps:
       - uses: actions/checkout@v6
 
@@ -195,62 +186,17 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .libtins-static
-          key: libtins-${{ env.LIBTINS_VERSION }}-alpine320-musl-static-${{ matrix.arch }}
+          key: libtins-${{ env.LIBTINS_VERSION }}-alpine320-musl-static-aarch64
 
       - name: Build libtins + pping2 inside Alpine
-        env:
-          LIBTINS_VERSION: ${{ env.LIBTINS_VERSION }}
         run: |
-          export HOST_UID=$(id -u)
-          export HOST_GID=$(id -g)
-          docker run --rm \
-            -v "${{ github.workspace }}:/work" \
-            -w /work \
-            -e LIBTINS_VERSION \
-            -e HOST_UID \
-            -e HOST_GID \
-            alpine:3.20 sh -c '
-              set -eux
-              apk add --no-cache build-base cmake git pkgconf \
-                  libpcap-dev linux-headers binutils file
-
-              if [ ! -f .libtins-static/lib/libtins.a ]; then
-                rm -rf .libtins-static
-                git clone --depth=1 --branch "$LIBTINS_VERSION" \
-                    https://github.com/mfontanini/libtins.git /tmp/libtins-src
-                cmake -S /tmp/libtins-src -B /tmp/libtins-build \
-                    -DCMAKE_BUILD_TYPE=Release \
-                    -DLIBTINS_BUILD_SHARED=0 \
-                    -DLIBTINS_ENABLE_PCAP=1 \
-                    -DCMAKE_INSTALL_PREFIX=/work/.libtins-static
-                cmake --build /tmp/libtins-build --parallel "$(nproc)"
-                cmake --install /tmp/libtins-build
-              fi
-
-              make STATIC=1 LIBTINS=/work/.libtins-static
-
-              file pping2
-              if readelf -l pping2 | grep -q INTERP; then
-                echo "FAIL: binary has dynamic interpreter"
-                readelf -l pping2 | grep -A1 INTERP
-                exit 1
-              fi
-              if readelf -d pping2 | grep -q NEEDED; then
-                echo "FAIL: binary has NEEDED entries"
-                readelf -d pping2 | grep NEEDED
-                exit 1
-              fi
-              echo "OK: fully static, no shared library deps"
-
-              ./pping2 -h >/dev/null 2>&1 || true
-
-              chown -R "$HOST_UID":"$HOST_GID" /work
-            '
+          docker run --rm -v "${{ github.workspace }}:/work" -w /work \
+            -e LIBTINS_VERSION -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+            alpine:3.20 sh packaging/build-musl-static.sh
 
       - name: Build tarball
         env:
           VERSION: ${{ steps.ver.outputs.VERSION }}
-          ARCH: ${{ matrix.arch }}
         run: |
           STAGING="pping2-${VERSION}-linux-${ARCH}-musl-static"
           mkdir "$STAGING"
@@ -261,7 +207,7 @@ jobs:
       - name: Upload tarball
         uses: actions/upload-artifact@v7
         with:
-          name: tarball-musl-static-${{ matrix.arch }}
+          name: tarball-musl-static-aarch64
           path: pping2-*-linux-*-musl-static.tar.gz
 
   # publish blocks on all build legs — a failing build prevents any release.

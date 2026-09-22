@@ -60,7 +60,8 @@ pping2:  pping.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -o pping2 pping.cpp $(LDFLAGS)
 
 check: pping2 test/unit_tests
-	@cd test && sh run_tests.sh
+	@rc=0; ./test/unit_tests || rc=1; \
+	for t in test/test_*.sh; do sh $$t || rc=1; done; exit $$rc
 
 test: check
 
@@ -108,6 +109,22 @@ pgo:
 # Regenerate test fixtures from test/synth/. Requires scapy.
 pcaps:
 	cd test && python3 -m synth.build
+
+# Regenerate test/golden/ from test/pcaps/. The node column is stripped so
+# goldens match on any host.
+goldens: pping2
+	for p in dns-tcp-linux dns-tcp-windows mixed-with-retx; do \
+	    for m in ts seq hybrid; do \
+	        ./pping2 -e --mode $$m -r test/pcaps/$$p.pcap 2>/dev/null \
+	            | awk '{$$11=""; gsub(/  +/, " "); print}' > test/golden/$$p.$$m.golden; \
+	    done; \
+	    ./pping2 -a -r test/pcaps/$$p.pcap 2>/dev/null \
+	        | awk '{$$8=""; gsub(/  +/, " "); print}' | sort \
+	        > test/golden/$$p.aggregate.golden; \
+	done
+	./pping2 -m -r test/pcaps/known.pcap 2>/dev/null > test/golden/known.m.golden
+	./pping2 -e -r test/pcaps/known.pcap 2>/dev/null \
+	    | awk '{$$11=""; gsub(/  +/, " "); print}' > test/golden/known.e.golden
 
 # Path substitution applied at install time so the shipped contrib/ scripts
 # work under arbitrary PREFIX/SYSCONFDIR. Source files keep /usr/local/bin
@@ -246,6 +263,6 @@ uninstall-clickhouse:
 
 uninstall-all: uninstall-clickhouse uninstall-systemd uninstall
 
-.PHONY: test check clean pcaps bench
+.PHONY: test check clean pcaps goldens bench
 .PHONY: check-install-vars install install-systemd install-clickhouse install-all
 .PHONY: uninstall uninstall-systemd uninstall-clickhouse uninstall-all
