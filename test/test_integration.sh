@@ -6,10 +6,7 @@
 # shape checks (field count, rtt/minRTT values, dotted IPs, numeric ports,
 # tag column) that used to live in a separate test_format.sh.
 #
-# Regenerating:
-#   ./pping2 -m -r test/pcaps/known.pcap 2>/dev/null > test/golden/known.m.golden
-#   ./pping2 -e -r test/pcaps/known.pcap 2>/dev/null \
-#       | awk '{$11=""; gsub(/  +/, " "); print}' > test/golden/known.e.golden
+# Regenerate goldens with `make goldens`.
 . "$(dirname "$0")/lib.sh"
 
 PCAP="$PCAPS_DIR/known.pcap"

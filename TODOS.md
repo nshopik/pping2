@@ -36,8 +36,6 @@ Surfaced in the final review of the `seq-ack-rtt` branch. None block merge.
 
 - [ ] **`bytesDep` is always 0 in SEQ-emitted samples.** The TS path writes `bytesDep` on the reverse flow when emitting; the SEQ path reads `rr->bytesDep` but never writes it. In `--mode seq` runs `dBytes` is always 0; in `--mode hybrid` on a mixed pcap the field is asymmetric between `t`-tagged and `s`-tagged samples. Either mirror the TS path's bookkeeping in the SEQ match block, or document the asymmetry.
 
-- [ ] **Extend `cross_mode_check.sh` to assert `--mode seq == --mode hybrid` on `dns-tcp-windows.pcap`.** The current script only asserts `--mode ts == --mode hybrid` on a TS-capable pcap. The dual property is implicit from the goldens but not asserted; locking it in is a 5-line addition.
-
 ## Future features
 
 - [ ] **Flow-age column in per-sample modes.** The 2026-05-13 flow-duration export added `flow_start` to aggregate-mode rows only. The per-sample equivalent is "flow age at sample time" (`capTm - window_start`), resetting on `flowMaxAge` — not lifetime. Every row gains a column, so downstream schema/loader churn is much larger than the aggregate-mode change. Wait for a concrete query pattern that needs it.
